@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Reactome PMID Tagger",
+  "version": "0.1.0",
+  "description": "Prefixes PDF downloads with PMID-<id>_ when the download is initiated from a tab that visited a PubMed article page.",
+  "permissions": ["tabs", "downloads", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://pmc.ncbi.nlm.nih.gov/articles/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

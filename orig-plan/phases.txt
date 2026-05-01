@@ -1,0 +1,7 @@
+Main: setup, pick project name, create button creates proj dir, read the sheet url, write the url to the magic file (this how projects are recognized), check the connection to the model provider, then unhide the extract tab. 
+Extract: implement what is described in extract-skill.md with the pdfs added via a growing list of swelected files and a plus button for the next file. limit to 10. start button becomes unhidden. the ncbi queries will be done inside the
+extension and not handed to model. instead of writing to csv, write to top left of sheet. the link html is not needed. 
+Summate: radio button "all"/"row span", with span unhiding a field for input of row/span. all will loop all rows. start does what is described in summate-skill.md , for each row check if all pdfs are deposited in the pdf subdir of proj dir, send pdfs and summation-style.md to model, get summaation, write to sheet in that row. Enable canonize tab.
+Canonize: this canonizes protein names. same span input. on start unique names used are extracted, and via a batch uniprot sparql query we get the canonical (reactome uses the capsed gene name) which replace previous.
+
+

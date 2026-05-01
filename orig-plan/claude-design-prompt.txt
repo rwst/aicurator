@@ -1,0 +1,7 @@
+the typescript extension will occupy the right half of a widescreen chrome tab and be always visible. it itself has inside its window 5 vertical tabs on the right side named "Main", "Extract", "Summate", "Canonize".
+the first tab shows the Reactome logo (attached), the extension name "AICurator" (very small) and the version number (even smaller), a prominently centered list dropdown (project name taken from chrome.storage.sync) with assoc field for showing current or entering new enties and buttons below that: "Create", "Delete" and "Quit". This all is separated by a horiz separator from the lower half of tab which contains settings as labels + editable fields or radio buttons.
+the settings (synced via chrome.storage.sync): "Projects Directory", "AI Model Provider", "Model Name"
+, "API Key".
+the 2/3/4th tabs all are divided horizontally into the interactive zone above and a scrollable log window showing log messages. all 2/3/4 are disabled until the selected project is created and the resp pr
+ocesses in the resp previous tab have finished. for now, just place on each a button "Start"
+
