@@ -1,0 +1,35 @@
+:root {
+  /* surfaces */
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --bg-tabs: #eef2f5;
+  --border: #d8dde2;
+  --border-strong: #b8c0c8;
+
+  /* text */
+  --text: #1f2933;
+  --text-muted: #6b7682;
+  --text-faint: #9aa3ad;
+
+  /* brand / accent (Reactome teal) */
+  --accent: #3da9c9;
+  --accent-deep: #2d8aa8;
+  --accent-soft: #e6f3f7;
+
+  /* status */
+  --danger: #b94a48;
+  --warn: #b3771a;
+  --ok: #2f7d4f;
+
+  /* disabled */
+  --disabled-bg: #f1f3f5;
+  --disabled-text: #b8bfc6;
+
+  /* shape */
+  --radius: 6px;
+  --radius-sm: 4px;
+
+  /* shadow */
+  --shadow-sm: 0 1px 2px rgba(20, 30, 40, 0.04);
+  --shadow-md: 0 2px 8px rgba(20, 30, 40, 0.08);
+}

@@ -1,0 +1,373 @@
+import { createSignal } from 'solid-js';
+import { createStore } from 'solid-js/store';
+import { syncStorage } from './syncStorage';
+import { localStorage } from './localStorage';
+import {
+  bootstrapAicuratorDir,
+  clearStoredHandle,
+  createProject as fsCreateProject,
+  deleteProject as fsDeleteProject,
+  getStoredHandle,
+  listProjects,
+  pickDirectory,
+  queryPermission,
+  requestPermission,
+  setStoredHandle,
+  type ParsedSheetUrl,
+  type ProjectMeta,
+} from '../services/projectsDir';
+
+export type Provider = 'Anthropic' | 'OpenAI' | 'OpenRouter';
+export const PROVIDERS: readonly Provider[] = [
+  'Anthropic',
+  'OpenAI',
+  'OpenRouter',
+] as const;
+
+export interface Settings {
+  provider: Provider;
+  modelName: string;
+  apiKey: string;
+}
+
+const DEFAULT_SETTINGS: Settings = {
+  provider: 'Anthropic',
+  modelName: '',
+  apiKey: '',
+};
+
+const SETTINGS_KEYS = ['provider', 'modelName', 'apiKey'] as const;
+type SettingsKey = (typeof SETTINGS_KEYS)[number];
+
+// Whitelist of keys that live in chrome.storage.local instead of sync.
+// API key is the only secret we hold; everything else syncs.
+const LOCAL_ONLY_KEYS: ReadonlySet<string> = new Set(['apiKey']);
+
+function backendFor(key: string): 'local' | 'sync' {
+  return LOCAL_ONLY_KEYS.has(key) ? 'local' : 'sync';
+}
+
+async function splitGet(
+  keys: readonly string[],
+): Promise<Record<string, unknown>> {
+  const localKeys = keys.filter((k) => backendFor(k) === 'local');
+  const syncKeys = keys.filter((k) => backendFor(k) === 'sync');
+  const [local, sync] = await Promise.all([
+    localStorage.get(localKeys),
+    syncStorage.get(syncKeys),
+  ]);
+  return { ...sync, ...local };
+}
+
+async function splitSet(items: Record<string, unknown>): Promise<void> {
+  const local: Record<string, unknown> = {};
+  const sync: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(items)) {
+    (backendFor(k) === 'local' ? local : sync)[k] = v;
+  }
+  await Promise.all([localStorage.set(local), syncStorage.set(sync)]);
+}
+
+// ── Reactive state ───────────────────────────────────────
+const [settings, setSettings] = createStore<Settings>({ ...DEFAULT_SETTINGS });
+
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+const [saveStatus, setSaveStatus] = createSignal<SaveStatus>('idle');
+
+// dirPermission: the FS-Access permission state for the projects-dir
+// handle. 'unpicked' means the user has not yet granted any directory.
+export type DirPermission = PermissionState | 'unpicked';
+
+export interface ProjectsState {
+  dirHandle: FileSystemDirectoryHandle | null;
+  dirPermission: DirPermission;
+  list: ProjectMeta[];
+  selectedName: string | null;
+}
+
+const [project, setProject] = createStore<ProjectsState>({
+  dirHandle: null,
+  dirPermission: 'unpicked',
+  list: [],
+  selectedName: null,
+});
+
+export { settings, saveStatus, project };
+
+// ── Hydration + listeners ────────────────────────────────
+function isProvider(v: unknown): v is Provider {
+  return typeof v === 'string' && (PROVIDERS as readonly string[]).includes(v);
+}
+
+function applyExternalSetting(key: SettingsKey, value: unknown): void {
+  if (key === 'provider' && isProvider(value)) setSettings('provider', value);
+  else if (key === 'modelName' && typeof value === 'string')
+    setSettings('modelName', value);
+  else if (key === 'apiKey' && typeof value === 'string')
+    setSettings('apiKey', value);
+}
+
+export async function hydrateSettings(): Promise<void> {
+  const stored = await splitGet(SETTINGS_KEYS as readonly string[]);
+  for (const key of SETTINGS_KEYS) {
+    if (key in stored) applyExternalSetting(key, stored[key]);
+  }
+}
+
+export function subscribeToStorageChanges(): void {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    for (const key of SETTINGS_KEYS) {
+      const change = changes[key];
+      if (!change) continue;
+      const expectedArea = backendFor(key);
+      if (area !== expectedArea) continue;
+      // Echo guard: skip if equal to current store value.
+      if (settings[key] === change.newValue) continue;
+      applyExternalSetting(key, change.newValue);
+    }
+  });
+}
+
+// ── Debounced writes ─────────────────────────────────────
+const DEBOUNCE_MS = 250;
+const SAVED_FLASH_MS = 5000;
+
+const pendingTimers = new Map<SettingsKey, ReturnType<typeof setTimeout>>();
+let savedFlashTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setSetting<K extends SettingsKey>(
+  key: K,
+  value: Settings[K],
+): void {
+  setSettings(key, value);
+  const existing = pendingTimers.get(key);
+  if (existing) clearTimeout(existing);
+  pendingTimers.set(
+    key,
+    setTimeout(() => {
+      pendingTimers.delete(key);
+      void writeOne(key, value);
+    }, DEBOUNCE_MS),
+  );
+}
+
+async function writeOne<K extends SettingsKey>(
+  key: K,
+  value: Settings[K],
+): Promise<void> {
+  setSaveStatus('saving');
+  try {
+    await splitSet({ [key]: value });
+    setSaveStatus('saved');
+    if (savedFlashTimer) clearTimeout(savedFlashTimer);
+    savedFlashTimer = setTimeout(() => {
+      savedFlashTimer = null;
+      setSaveStatus('idle');
+    }, SAVED_FLASH_MS);
+  } catch (err) {
+    console.error('[aicurator] settings save failed:', err);
+    setSaveStatus('error');
+  }
+}
+
+// ── Project actions ──────────────────────────────────────
+
+const SELECTED_PROJECT_KEY = 'selectedProject';
+
+// Probe whether the directory the handle refers to actually still exists
+// on disk. Permission state and existence are independent in Chrome:
+// queryPermission can return 'granted' for a handle whose underlying
+// folder has been removed.
+async function verifyHandleExists(
+  handle: FileSystemDirectoryHandle,
+): Promise<boolean> {
+  try {
+    const it = handle.values();
+    await it.next();
+    return true;
+  } catch (err) {
+    if (err && (err as Error).name === 'NotFoundError') return false;
+    throw err;
+  }
+}
+
+async function resetToUnpicked(): Promise<void> {
+  await clearStoredHandle();
+  setProject({
+    dirHandle: null,
+    dirPermission: 'unpicked',
+    list: [],
+    selectedName: null,
+  });
+}
+
+export async function hydrateProjectsDir(): Promise<void> {
+  const handle = await getStoredHandle();
+  if (!handle) {
+    setProject({ dirHandle: null, dirPermission: 'unpicked', list: [] });
+    return;
+  }
+  let perm: PermissionState;
+  try {
+    perm = await queryPermission(handle);
+  } catch (err) {
+    console.warn('[aicurator] stored handle is stale, clearing:', err);
+    await resetToUnpicked();
+    return;
+  }
+  if (perm === 'granted') {
+    // Permission cached, but does the folder still exist?
+    const exists = await verifyHandleExists(handle);
+    if (!exists) {
+      console.warn('[aicurator] aicurator/ folder removed since last session');
+      await resetToUnpicked();
+      return;
+    }
+  }
+  setProject({ dirHandle: handle, dirPermission: perm });
+  if (perm === 'granted') {
+    try {
+      await refreshProjectList();
+    } catch (err) {
+      console.warn('[aicurator] project list scan failed:', err);
+    }
+  }
+}
+
+export async function refreshProjectList(): Promise<void> {
+  if (!project.dirHandle || project.dirPermission !== 'granted') return;
+  const list = await listProjects(project.dirHandle);
+  setProject('list', list);
+  // Restore previously-selected project name from sync storage.
+  const stored = await syncStorage.get([SELECTED_PROJECT_KEY]);
+  const candidate = stored[SELECTED_PROJECT_KEY];
+  let next: string | null = null;
+  if (typeof candidate === 'string' && list.some((p) => p.name === candidate)) {
+    next = candidate;
+  } else if (list.length > 0) {
+    next = list[0].name;
+  }
+  setProject('selectedName', next);
+  if (next) await syncStorage.set({ [SELECTED_PROJECT_KEY]: next });
+}
+
+export async function setSelectedProject(name: string | null): Promise<void> {
+  setProject('selectedName', name);
+  if (name) await syncStorage.set({ [SELECTED_PROJECT_KEY]: name });
+}
+
+export async function grantProjectsDir(): Promise<void> {
+  // Pre-create <Downloads>/aicurator/ so the user has a visible target.
+  // Best-effort: failure here doesn't block the picker.
+  try {
+    await bootstrapAicuratorDir();
+  } catch (err) {
+    console.warn('[aicurator] bootstrap warning:', err);
+  }
+  const handle = await pickDirectory();
+  // Validate folder name BEFORE escalating to readwrite. If the user
+  // picked the wrong folder (Downloads root, Desktop, etc.), throw now —
+  // never request readwrite on a system-special folder.
+  if (handle.name !== 'aicurator') {
+    throw new Error(
+      `Picked folder is "${handle.name}" — it must be named "aicurator". ` +
+        `Open <Downloads>/aicurator/ in the picker, then click "Select folder".`,
+    );
+  }
+  const perm = await requestPermission(handle);
+  if (perm !== 'granted') {
+    throw new Error(
+      'Read/write permission was not granted for the aicurator folder.',
+    );
+  }
+  await setStoredHandle(handle);
+  setProject({ dirHandle: handle, dirPermission: perm });
+  await refreshProjectList();
+}
+
+export async function reGrantProjectsDir(): Promise<void> {
+  if (!project.dirHandle) return grantProjectsDir();
+  let perm: PermissionState;
+  try {
+    perm = await requestPermission(project.dirHandle);
+  } catch (err) {
+    console.warn('[aicurator] re-grant failed, clearing stale handle:', err);
+    await resetToUnpicked();
+    throw new Error(
+      'The previous aicurator folder no longer exists. ' +
+        'Click "Grant access" to pick a new one.',
+    );
+  }
+  if (perm === 'granted') {
+    // Verify the folder is still on disk, even though the grant succeeded.
+    const exists = await verifyHandleExists(project.dirHandle);
+    if (!exists) {
+      await resetToUnpicked();
+      throw new Error(
+        'The previous aicurator folder no longer exists. ' +
+          'Click "Grant access" to pick a new one.',
+      );
+    }
+  }
+  setProject('dirPermission', perm);
+  if (perm === 'granted') {
+    try {
+      await refreshProjectList();
+    } catch (err) {
+      console.warn('[aicurator] project list scan failed:', err);
+    }
+  }
+}
+
+export async function forgetProjectsDir(): Promise<void> {
+  await clearStoredHandle();
+  setProject({
+    dirHandle: null,
+    dirPermission: 'unpicked',
+    list: [],
+    selectedName: null,
+  });
+}
+
+export async function createProjectAction(
+  name: string,
+  sheet: ParsedSheetUrl,
+): Promise<void> {
+  if (!project.dirHandle || project.dirPermission !== 'granted')
+    throw new Error('Projects directory not granted');
+  try {
+    await fsCreateProject(project.dirHandle, name, sheet);
+  } catch (err) {
+    if (err && (err as Error).name === 'NotFoundError') {
+      await resetToUnpicked();
+      throw new Error(
+        'The aicurator folder is no longer on disk. ' +
+          'Click "Grant access" to pick it again.',
+      );
+    }
+    throw err;
+  }
+  await refreshProjectList();
+  await setSelectedProject(name);
+}
+
+export async function deleteProjectAction(name: string): Promise<void> {
+  if (!project.dirHandle || project.dirPermission !== 'granted')
+    throw new Error('Projects directory not granted');
+  try {
+    await fsDeleteProject(project.dirHandle, name);
+  } catch (err) {
+    if (err && (err as Error).name === 'NotFoundError') {
+      await resetToUnpicked();
+      throw new Error(
+        'The aicurator folder is no longer on disk. ' +
+          'Click "Grant access" to pick it again.',
+      );
+    }
+    throw err;
+  }
+  await refreshProjectList();
+}
+
+// Re-export for convenience.
+export { setStoredHandle };

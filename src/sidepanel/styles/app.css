@@ -1,0 +1,334 @@
+/* ── Resets ─────────────────────────────────────────────── */
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+button { font-family: inherit; }
+input, select { font-family: inherit; color: inherit; }
+
+/* ── Panel root (fills the side panel viewport) ─────────── */
+.panel {
+  height: 100vh;
+  width: 100vw;
+  background: var(--bg);
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* ── Vertical tab strip ─────────────────────────────────── */
+.tabs {
+  width: 92px;
+  flex: 0 0 92px;
+  background: var(--bg-tabs);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+.tab {
+  position: relative;
+  border: 0;
+  background: transparent;
+  padding: 14px 6px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition: background 120ms, color 120ms;
+}
+.tab:hover:not(:disabled) { background: rgba(61,169,201,0.08); color: var(--text); }
+.tab.active {
+  background: var(--bg);
+  color: var(--text);
+}
+.tab.active::before {
+  content: "";
+  position: absolute;
+  top: 6px; bottom: 6px; right: -1px;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px 0 0 2px;
+}
+.tab:disabled {
+  color: var(--disabled-text);
+  cursor: not-allowed;
+}
+.tab .lock {
+  display: block;
+  font-size: 10px;
+  margin-top: 4px;
+  color: var(--disabled-text);
+}
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ── Panel content area ─────────────────────────────────── */
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Main tab: header ───────────────────────────────────── */
+.header {
+  padding: 16px 18px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+.header img.logo {
+  height: 26px;
+  width: auto;
+  display: block;
+}
+.header .meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+.header .meta .app {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.header .meta .ver {
+  font-size: 9px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* ── Scroll region ──────────────────────────────────────── */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 18px 22px;
+}
+.scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll::-webkit-scrollbar-thumb { background: #c5cdd4; border-radius: 4px; }
+.scroll::-webkit-scrollbar-thumb:hover { background: #aab3bc; }
+
+/* ── Project block ──────────────────────────────────────── */
+.project-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 14px;
+}
+.project-block .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+/* ── Form fields ────────────────────────────────────────── */
+.field, .select {
+  width: 92%;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.field:focus, .select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(61,169,201,0.18);
+}
+.field.new {
+  border-style: dashed;
+  background: #fafbfc;
+}
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1.5l5 5 5-5' fill='none' stroke='%236b7682' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+/* ── Buttons ────────────────────────────────────────────── */
+.btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.btn {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms, transform 80ms;
+}
+.btn:hover { background: var(--bg-soft); }
+.btn:active { transform: translateY(1px); }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent-deep);
+  color: #fff;
+}
+.btn.primary:hover { background: var(--accent-deep); }
+.btn.danger {
+  color: var(--danger);
+  border-color: #d6b3b3;
+}
+.btn.danger:hover { background: #fbf2f2; }
+.btn:disabled {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+.btn.primary:disabled {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--border);
+}
+
+/* ── Divider ────────────────────────────────────────────── */
+hr.divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+
+/* ── Settings ───────────────────────────────────────────── */
+.settings h3 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 12px;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+.settings .row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.settings .row label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+.settings .row .field,
+.settings .row .select {
+  width: 100%;
+  height: 32px;
+  font-size: 12px;
+}
+.settings .row .field.mono {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+}
+.settings .row .help {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.settings .save-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.settings .save-hint .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.settings .save-hint .dot.error { background: var(--danger); }
+.settings .save-hint .dot.saving { background: var(--text-faint); }
+
+/* ── Inline danger banner (shown e.g. for sheet-URL errors) */
+.banner.danger {
+  width: 92%;
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  background: #fbf2f2;
+  color: var(--danger);
+  border: 1px solid #d6b3b3;
+  border-radius: var(--radius);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ── Access prompt (shown when no projects-dir handle) ───── */
+.access-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 8px;
+  text-align: center;
+}
+.access-prompt .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.access-prompt .help {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 320px;
+}
+
+/* ── Single-instance splash ─────────────────────────────── */
+.instance-splash {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+  z-index: 1000;
+}
+.instance-splash h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.instance-splash p {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 320px;
+  font-size: 12px;
+}
