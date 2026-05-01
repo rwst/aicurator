@@ -13,10 +13,20 @@ import {
   type Provider,
 } from '../store';
 import { getActiveTabSheetUrl } from '../services/projectsDir';
+import { testConnection, type TestResult } from '../services/testConnection';
 
 export default function MainTab() {
   const [newName, setNewName] = createSignal('');
   const [error, setError] = createSignal<string | null>(null);
+  const [testStatus, setTestStatus] = createSignal<
+    'idle' | 'testing' | TestResult
+  >('idle');
+
+  const onTestConnection = async () => {
+    setTestStatus('testing');
+    const result = await testConnection();
+    setTestStatus(result);
+  };
 
   const granted = () => project.dirPermission === 'granted';
   const hasProject = () => project.selectedName !== null;
@@ -243,6 +253,37 @@ export default function MainTab() {
               onInput={(e) => setSetting('apiKey', e.currentTarget.value)}
             />
             <span class="help">Stored locally; not synced</span>
+          </div>
+
+          <div class="row">
+            <div class="conn-row">
+              <button
+                type="button"
+                class="btn"
+                onClick={onTestConnection}
+                disabled={testStatus() === 'testing'}
+              >
+                {testStatus() === 'testing' ? 'Testing…' : 'Test connection'}
+              </button>
+              <Show
+                when={
+                  testStatus() !== 'idle' && testStatus() !== 'testing'
+                }
+              >
+                <span
+                  class="conn-status"
+                  classList={{
+                    ok: (testStatus() as TestResult).ok,
+                    err: !(testStatus() as TestResult).ok,
+                  }}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {(testStatus() as TestResult).ok ? '✓ ' : '✗ '}
+                  {(testStatus() as TestResult).message}
+                </span>
+              </Show>
+            </div>
           </div>
 
           <Show when={saveStatus() !== 'idle'}>

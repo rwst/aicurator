@@ -272,6 +272,21 @@ hr.divider {
 .settings .save-hint .dot.error { background: var(--danger); }
 .settings .save-hint .dot.saving { background: var(--text-faint); }
 
+/* ── Test-connection row ────────────────────────────────── */
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.conn-status {
+  font-size: 11px;
+  font-family: 'Courier New', Courier, monospace;
+  word-break: break-word;
+}
+.conn-status.ok  { color: var(--ok); }
+.conn-status.err { color: var(--danger); }
+
 /* ── Inline danger banner (shown e.g. for sheet-URL errors) */
 .banner.danger {
   width: 92%;
