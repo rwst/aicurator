@@ -1,23 +1,43 @@
-import { createSignal, onMount } from 'solid-js';
+import { Match, Switch, createSignal, onMount } from 'solid-js';
 import TabStrip, { type TabIndex } from './components/TabStrip';
 import InstanceGuard from './components/InstanceGuard';
 import MainTab from './tabs/MainTab';
+import ExtractTab from './tabs/ExtractTab';
+import SummateTab from './tabs/SummateTab';
+import CanonizeTab from './tabs/CanonizeTab';
 import {
   hydrateProjectsDir,
   hydrateSettings,
+  project,
   subscribeToStorageChanges,
 } from './store';
+import { hydrateAllLogs } from './services/log';
 
 export default function App() {
   const [activeTab, setActiveTab] = createSignal<TabIndex>(0);
 
-  // Phase 2: only Main is enabled. Phase 3+ wires project state.
-  const isEnabled = (idx: TabIndex) => idx === 0;
+  // Phase 4 gating. Final shape lands as we wire stage/PDFs in later phases.
+  // - Main: always
+  // - Extract: project selected (Phase 6 will additionally require >=1 PDF)
+  // - Summate: stage in {extracted, ...} — Phase 7
+  // - Canonize: stage in {summated, ...} — Phase 8
+  const isEnabled = (idx: TabIndex) => {
+    if (idx === 0) return true;
+    if (idx === 1) return project.selectedName !== null;
+    return false;
+  };
+
+  // If the active tab becomes disabled (e.g. project deleted), fall back
+  // to Main so we don't render a locked tab.
+  const onSelect = (idx: TabIndex) => {
+    if (isEnabled(idx)) setActiveTab(idx);
+  };
 
   onMount(() => {
     subscribeToStorageChanges();
     void hydrateSettings();
     void hydrateProjectsDir();
+    void hydrateAllLogs();
   });
 
   return (
@@ -26,11 +46,23 @@ export default function App() {
         <TabStrip
           activeTab={activeTab}
           isEnabled={isEnabled}
-          onSelect={setActiveTab}
+          onSelect={onSelect}
         />
         <section class="content">
-          {activeTab() === 0 && <MainTab />}
-          {/* process tabs land in Phase 4 */}
+          <Switch>
+            <Match when={activeTab() === 0}>
+              <MainTab />
+            </Match>
+            <Match when={activeTab() === 1 && isEnabled(1)}>
+              <ExtractTab />
+            </Match>
+            <Match when={activeTab() === 2 && isEnabled(2)}>
+              <SummateTab />
+            </Match>
+            <Match when={activeTab() === 3 && isEnabled(3)}>
+              <CanonizeTab />
+            </Match>
+          </Switch>
         </section>
       </div>
     </InstanceGuard>

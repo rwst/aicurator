@@ -1,5 +1,6 @@
-import { createSignal } from 'solid-js';
+import { createEffect, createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
+import { clearAllLogs } from '../services/log';
 import { syncStorage } from './syncStorage';
 import { localStorage } from './localStorage';
 import {
@@ -371,3 +372,15 @@ export async function deleteProjectAction(name: string): Promise<void> {
 
 // Re-export for convenience.
 export { setStoredHandle };
+
+// Clear logs whenever the user switches between projects.
+// (Pure hydrate from null → name doesn't trigger this — that path keeps
+// the previously persisted logs visible.)
+createRoot(() => {
+  let last: string | null = null;
+  createEffect(() => {
+    const cur = project.selectedName;
+    if (last !== null && cur !== last) void clearAllLogs();
+    last = cur;
+  });
+});
