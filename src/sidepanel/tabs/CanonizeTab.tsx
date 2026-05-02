@@ -18,10 +18,18 @@ export default function CanonizeTab() {
 
   const status = createMemo<RunStatus>(() => {
     if (project.running === 'canonize') return 'running';
-    if (project.stage !== 'summated' && project.stage !== 'canonized')
+    if (
+      project.selectedName === null ||
+      (project.stage !== 'summated' && project.stage !== 'canonized')
+    )
       return 'locked';
     return 'ready';
   });
+
+  const hasProject = () => project.selectedName !== null;
+  const startVisible = () =>
+    hasProject() &&
+    (project.stage === 'summated' || project.stage === 'canonized');
 
   const parsedSpan = createMemo<RowRange | null>(() =>
     mode() === 'all' ? null : parseRowRange(spanText()),
@@ -93,7 +101,7 @@ export default function CanonizeTab() {
               name="canonize-mode"
               checked={mode() === 'all'}
               onChange={() => setMode('all')}
-              disabled={project.running !== 'none'}
+              disabled={!hasProject() || project.running !== 'none'}
             />
             <span>all rows</span>
           </label>
@@ -103,7 +111,7 @@ export default function CanonizeTab() {
               name="canonize-mode"
               checked={mode() === 'span'}
               onChange={() => setMode('span')}
-              disabled={project.running !== 'none'}
+              disabled={!hasProject() || project.running !== 'none'}
             />
             <span>span:</span>
           </label>
@@ -112,7 +120,11 @@ export default function CanonizeTab() {
             placeholder="2-23"
             value={spanText()}
             onInput={(e) => setSpanText(e.currentTarget.value)}
-            disabled={mode() !== 'span' || project.running !== 'none'}
+            disabled={
+              !hasProject() ||
+              mode() !== 'span' ||
+              project.running !== 'none'
+            }
             classList={{ invalid: mode() === 'span' && !spanIsValid() }}
           />
         </div>
@@ -128,14 +140,16 @@ export default function CanonizeTab() {
           <Show
             when={project.running === 'canonize'}
             fallback={
-              <button
-                type="button"
-                class="btn primary"
-                onClick={onStart}
-                disabled={!canStart()}
-              >
-                ▶ Start
-              </button>
+              <Show when={startVisible()}>
+                <button
+                  type="button"
+                  class="btn primary"
+                  onClick={onStart}
+                  disabled={!canStart()}
+                >
+                  ▶ Start
+                </button>
+              </Show>
             }
           >
             <button type="button" class="btn danger" onClick={onCancel}>

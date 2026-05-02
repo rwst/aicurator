@@ -8,6 +8,8 @@ import {
   clearStoredHandle,
   createProject as fsCreateProject,
   deleteProject as fsDeleteProject,
+  findProjectByExactSheet,
+  getActiveTabSheetUrl,
   getStoredHandle,
   listProjects,
   pickDirectory,
@@ -496,6 +498,52 @@ export function clearExtractPdfs(): void {
 
 // Avoid unused-var error from the bootstrapAicuratorDir re-export not used here.
 void bootstrapAicuratorDir;
+
+// ── Active-sheet auto-detection ──────────────────────────
+
+function pathwayDirty(): boolean {
+  if (!project.selectedName) {
+    return project.pathwayName.trim().length > 0;
+  }
+  const meta = project.list.find((p) => p.name === project.selectedName);
+  return project.pathwayName !== (meta?.pathwayName ?? '');
+}
+
+function hasPendingExtractState(): boolean {
+  return extractPdfHandles().length > 0 || pathwayDirty();
+}
+
+// Mount-time detection. Sheet match → select that project. Sheet but no
+// match → clear selection (per Q1 spec). Non-sheet → leave whatever
+// refreshProjectList restored from chrome.storage.sync (Q6).
+export async function detectActiveSheetMatch(): Promise<void> {
+  if (project.dirPermission !== 'granted') return;
+  const parsed = await getActiveTabSheetUrl();
+  if (!parsed) return;
+  const matched = findProjectByExactSheet(project.list, parsed);
+  if (matched) {
+    if (matched.name !== project.selectedName) {
+      await setSelectedProject(matched.name);
+    }
+  } else if (project.selectedName !== null) {
+    await setSelectedProject(null);
+  }
+}
+
+// Live-tracking handler. Additive-only: only ever sets a project, never
+// clears (Q3). Skipped during runs (Q2 running guard), on non-sheet tabs
+// (Q2 non-sheet guard), and when Extract has pending unsaved state (Q7).
+export async function liveTrackTabChange(): Promise<void> {
+  if (project.running !== 'none') return;
+  if (project.dirPermission !== 'granted') return;
+  const parsed = await getActiveTabSheetUrl();
+  if (!parsed) return;
+  const matched = findProjectByExactSheet(project.list, parsed);
+  if (!matched) return;
+  if (matched.name === project.selectedName) return;
+  if (hasPendingExtractState()) return;
+  await setSelectedProject(matched.name);
+}
 
 // Clear logs whenever the user switches between projects.
 // (Pure hydrate from null → name doesn't trigger this — that path keeps

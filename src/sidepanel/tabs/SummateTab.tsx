@@ -45,9 +45,14 @@ export default function SummateTab() {
 
   const status = createMemo<RunStatus>(() => {
     if (project.running === 'summate') return 'running';
-    if (project.stage === 'none') return 'locked';
+    if (project.selectedName === null || project.stage === 'none')
+      return 'locked';
     return 'ready';
   });
+
+  const startVisible = () =>
+    project.selectedName !== null && project.stage !== 'none';
+  const hasProject = () => project.selectedName !== null;
 
   const parsedSpan = createMemo<RowRange | null>(() =>
     mode() === 'all' ? null : parseRowRange(spanText()),
@@ -248,7 +253,7 @@ export default function SummateTab() {
               name="summate-mode"
               checked={mode() === 'all'}
               onChange={() => setMode('all')}
-              disabled={project.running !== 'none'}
+              disabled={!hasProject() || project.running !== 'none'}
             />
             <span>all rows</span>
           </label>
@@ -258,7 +263,7 @@ export default function SummateTab() {
               name="summate-mode"
               checked={mode() === 'span'}
               onChange={() => setMode('span')}
-              disabled={project.running !== 'none'}
+              disabled={!hasProject() || project.running !== 'none'}
             />
             <span>span:</span>
           </label>
@@ -267,29 +272,35 @@ export default function SummateTab() {
             placeholder="2-23"
             value={spanText()}
             onInput={(e) => setSpanText(e.currentTarget.value)}
-            disabled={mode() !== 'span' || project.running !== 'none'}
+            disabled={
+              !hasProject() ||
+              mode() !== 'span' ||
+              project.running !== 'none'
+            }
             classList={{ invalid: mode() === 'span' && !spanIsValid() }}
           />
         </div>
 
-        <div class="pdfdir-line">
-          <span>
-            PDF directory: <code>{project.selectedName}/PDF/</code> ·{' '}
-            <strong>{pdfMap().size}</strong> PMID-prefixed PDF
-            {pdfMap().size === 1 ? '' : 's'}
-          </span>
-          <button
-            type="button"
-            class="btn btn-tiny"
-            onClick={() => {
-              void rescanPdfs();
-              void loadSheetRows();
-            }}
-            disabled={project.running !== 'none'}
-          >
-            Re-scan
-          </button>
-        </div>
+        <Show when={hasProject()}>
+          <div class="pdfdir-line">
+            <span>
+              PDF directory: <code>{project.selectedName}/PDF/</code> ·{' '}
+              <strong>{pdfMap().size}</strong> PMID-prefixed PDF
+              {pdfMap().size === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              class="btn btn-tiny"
+              onClick={() => {
+                void rescanPdfs();
+                void loadSheetRows();
+              }}
+              disabled={project.running !== 'none'}
+            >
+              Re-scan
+            </button>
+          </div>
+        </Show>
 
         <div class="curator-note">
           📥 Drop PMID-prefixed PDFs into <code>PDF/</code> via the merged
@@ -298,7 +309,7 @@ export default function SummateTab() {
           PubMed.
         </div>
 
-        <Show when={chipRows().length > 0}>
+        <Show when={hasProject() && chipRows().length > 0}>
           <div class="chip-grid">
             <For each={chipRows()}>
               {(rr) => (
@@ -333,7 +344,7 @@ export default function SummateTab() {
           <Show
             when={project.running === 'summate'}
             fallback={
-              <>
+              <Show when={startVisible()}>
                 <button
                   type="button"
                   class="btn primary"
@@ -347,11 +358,11 @@ export default function SummateTab() {
                   class="btn"
                   onClick={onMockTest}
                   disabled={!canMock()}
-                  title="Skip the LLM call and write a hand-crafted mock summation to the selected rows"
+                  title="Skip the LLM call and write hand-crafted mock summations to the selected rows"
                 >
                   Test sheet write
                 </button>
-              </>
+              </Show>
             }
           >
             <button type="button" class="btn danger" onClick={onCancel}>

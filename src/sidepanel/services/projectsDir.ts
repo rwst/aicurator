@@ -141,6 +141,17 @@ export async function getActiveTabSheetUrl(): Promise<ParsedSheetUrl | null> {
   return parseSheetUrl(url);
 }
 
+export function findProjectByExactSheet(
+  list: readonly ProjectMeta[],
+  parsed: ParsedSheetUrl,
+): ProjectMeta | null {
+  return (
+    list.find(
+      (p) => p.spreadsheetId === parsed.spreadsheetId && p.gid === parsed.gid,
+    ) ?? null
+  );
+}
+
 // ── Create / Delete ──────────────────────────────────────
 export async function createProject(
   rootDir: FileSystemDirectoryHandle,

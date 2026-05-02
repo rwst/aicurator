@@ -218,10 +218,14 @@ export default function ExtractTab() {
         <input
           id="pathway-name"
           class="field mono"
-          placeholder='e.g. "classical complement activation"'
+          placeholder={
+            project.selectedName === null
+              ? 'select a project first'
+              : 'e.g. "classical complement activation"'
+          }
           value={project.pathwayName}
           onInput={(e) => setPathwayName(e.currentTarget.value)}
-          disabled={project.running !== 'none'}
+          disabled={project.selectedName === null || project.running !== 'none'}
         />
 
         <Show when={extractPdfHandles().length === 0}>
@@ -242,14 +246,16 @@ export default function ExtractTab() {
             when={project.running === 'extract'}
             fallback={
               <>
-                <button
-                  type="button"
-                  class="btn primary"
-                  onClick={onStart}
-                  disabled={!canStart()}
-                >
-                  ▶ Start
-                </button>
+                <Show when={project.selectedName !== null}>
+                  <button
+                    type="button"
+                    class="btn primary"
+                    onClick={onStart}
+                    disabled={!canStart()}
+                  >
+                    ▶ Start
+                  </button>
+                </Show>
                 <button
                   type="button"
                   class="btn"
@@ -270,15 +276,17 @@ export default function ExtractTab() {
                     Clear
                   </button>
                 </Show>
-                <button
-                  type="button"
-                  class="btn"
-                  onClick={onMockTest}
-                  disabled={!canMock()}
-                  title="Skip the LLM call and write hand-crafted mock data to the sheet — useful for iterating on sheet-write logic"
-                >
-                  Test sheet write
-                </button>
+                <Show when={project.selectedName !== null}>
+                  <button
+                    type="button"
+                    class="btn"
+                    onClick={onMockTest}
+                    disabled={!canMock()}
+                    title="Skip the LLM call and write hand-crafted mock data to the sheet"
+                  >
+                    Test sheet write
+                  </button>
+                </Show>
               </>
             }
           >
