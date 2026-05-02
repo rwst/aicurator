@@ -16,7 +16,12 @@ import type { Provider } from '../llm/provider';
 import { EXTRACT_SYSTEM_PROMPT } from '../prompts/extract.system';
 import { validate } from '../services/jsonSchema';
 import { resolveByDoi, resolveByTitleAuthor } from '../services/ncbi';
-import { batchUpdateValues, getSheetName, quoteSheet } from '../services/sheets';
+import {
+  batchUpdateValues,
+  getSheetName,
+  getValues,
+  quoteSheet,
+} from '../services/sheets';
 
 export interface ExtractInput {
   pathwayName: string;
@@ -147,6 +152,33 @@ const EXTRACT_SCHEMA = {
 async function readPdfBytes(handle: FileSystemFileHandle): Promise<ArrayBuffer> {
   const file = await handle.getFile();
   return await file.arrayBuffer();
+}
+
+// Pre-flight check: returns true if the sheet's row 1 contains anything
+// that isn't our exact 12-column header. Used by the ExtractTab to fire
+// the "sheet has unrelated data — overwrite?" modal on first runs.
+//
+// On any error reading the sheet, returns false — the runner itself
+// will surface the error if it can't write later.
+export async function hasUnrelatedSheetData(
+  spreadsheetId: string,
+  gid: string,
+): Promise<boolean> {
+  try {
+    const sheetName = await getSheetName(spreadsheetId, gid);
+    const sheetRef = quoteSheet(sheetName);
+    const rows: string[][] = await getValues(spreadsheetId, `${sheetRef}!A1:L1`);
+    const r0: string[] | undefined = rows[0];
+    if (!r0 || r0.every((c: string) => !c)) return false;
+    if (
+      r0.length === HEADER_ROW.length &&
+      r0.every((c: string, i: number) => c === HEADER_ROW[i])
+    )
+      return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function writeDebugFile(

@@ -12,7 +12,11 @@ import {
   setStage,
   settings,
 } from '../store';
-import { runExtract, runExtractMock } from '../runners/extract';
+import {
+  hasUnrelatedSheetData,
+  runExtract,
+  runExtractMock,
+} from '../runners/extract';
 import { makeProvider } from '../llm/provider';
 
 const PDF_CAP = 10;
@@ -66,14 +70,6 @@ export default function ExtractTab() {
   const onStart = async () => {
     setError(null);
     if (!canStart()) return;
-    if (
-      project.stage !== 'none' &&
-      !window.confirm(
-        `Re-running Extract will overwrite the sheet header + rows and reset Summate / Canonize state.\n\nContinue?`,
-      )
-    )
-      return;
-
     if (!project.dirHandle || !project.selectedName) return;
     const projectMeta = project.list.find(
       (p) => p.name === project.selectedName,
@@ -81,6 +77,25 @@ export default function ExtractTab() {
     if (!projectMeta) {
       setError('Project metadata not found in store.');
       return;
+    }
+
+    // Re-run modal subsumes empty-sheet check (Q7 + §1.6 of plan).
+    if (project.stage !== 'none') {
+      if (
+        !window.confirm(
+          'Re-running Extract will overwrite the sheet header + rows and reset Summate / Canonize state.\n\nContinue?',
+        )
+      )
+        return;
+    } else if (
+      await hasUnrelatedSheetData(projectMeta.spreadsheetId, projectMeta.gid)
+    ) {
+      if (
+        !window.confirm(
+          '⚠ The target sheet contains data in row 1 that is not the AICurator 12-column header.\n\nProceeding will overwrite it. Continue?',
+        )
+      )
+        return;
     }
 
     let provider;
@@ -142,6 +157,23 @@ export default function ExtractTab() {
     if (!projectMeta) {
       setError('Project metadata not found in store.');
       return;
+    }
+    if (project.stage !== 'none') {
+      if (
+        !window.confirm(
+          'Re-running mock Extract will overwrite the sheet and reset Summate / Canonize state.\n\nContinue?',
+        )
+      )
+        return;
+    } else if (
+      await hasUnrelatedSheetData(projectMeta.spreadsheetId, projectMeta.gid)
+    ) {
+      if (
+        !window.confirm(
+          '⚠ The target sheet contains data in row 1 that is not the AICurator 12-column header.\n\nProceeding will overwrite it. Continue?',
+        )
+      )
+        return;
     }
     activeAbort = new AbortController();
     setRunning('extract');
