@@ -90,23 +90,37 @@ export function rewriteCell(
   return out.join(' | ');
 }
 
-// Apply a bareName→canonical map to free-form text (Title, Summation),
-// using word-boundary regex. Sorted longest-first so "ORC complex"
-// is replaced before "ORC". Bare names <3 chars are skipped to avoid
+// Pre-compile a replacement map into a sorted list of (regex, canonical)
+// pairs. Reuse across many free-text rewrites — building a `RegExp` per
+// entity per cell is the hot-path bottleneck during Canonize.
+export interface CompiledReplacements {
+  entries: { re: RegExp; canonical: string }[];
+}
+
+export function compileReplacements(
+  replacements: Map<string, string>,
+): CompiledReplacements {
+  const entries = [...replacements.entries()]
+    .filter(([k, v]) => k.length >= 3 && k !== v)
+    .sort((a, b) => b[0].length - a[0].length)
+    .map(([bare, canonical]) => {
+      const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return { re: new RegExp(`\\b${escaped}\\b`, 'g'), canonical };
+    });
+  return { entries };
+}
+
+// Apply a pre-compiled replacement set to free-form text (Title,
+// Summation). Sorted longest-first so "ORC complex" is replaced before
+// "ORC". Bare names <3 chars are filtered out at compile time to avoid
 // prose collisions.
 export function rewriteFreeText(
   text: string,
-  replacements: Map<string, string>,
+  compiled: CompiledReplacements,
 ): string {
   if (!text) return text;
-  const entries = [...replacements.entries()]
-    .filter(([k]) => k.length >= 3)
-    .sort((a, b) => b[0].length - a[0].length);
   let out = text;
-  for (const [bare, canonical] of entries) {
-    if (bare === canonical) continue;
-    const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`\\b${escaped}\\b`, 'g');
+  for (const { re, canonical } of compiled.entries) {
     out = out.replace(re, canonical);
   }
   return out;

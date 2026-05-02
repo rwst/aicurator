@@ -1,9 +1,7 @@
-// Summate runner — per-row pipeline:
-//   1. Read sheet rows in selected range.
-//   2. Skip subtitle (## …) and gap (parenthesized title) rows.
-//   3. Per row: parse PMIDs from H..L, glob PDFs in <project>/PDF/,
-//      LLM call with PDFs, write prose to column B.
-//   4. After all rows: stage = 'summated'.
+// Summate runner — per-row pipeline. Reads sheet rows, skips
+// subtitle / gap rows, calls the LLM with each row's cited PDFs, writes
+// prose to column B. Each row commits independently for partial-progress
+// resilience.
 
 import type { Log } from '../services/log';
 import type { Provider } from '../llm/provider';
@@ -15,18 +13,21 @@ import {
   quoteSheet,
 } from '../services/sheets';
 import { pmidFromFilename } from '../services/pdfDir';
+import {
+  clampRowRange,
+  isSkippableRow,
+  parsePmidsFromRow,
+  type RowRange,
+} from '../services/sheetRows';
 
-export interface RowRange {
-  start: number; // 1-based, inclusive (sheet row number)
-  end: number;   // 1-based, inclusive
-}
+export type { RowRange };
 
 export interface SummateInput {
   spreadsheetId: string;
   gid: string;
   projectDir: FileSystemDirectoryHandle;
   pdfMap: Map<string, FileSystemFileHandle>;
-  range: RowRange | null; // null = all data rows
+  range: RowRange | null;
   provider: Provider;
   log: Log;
   signal: AbortSignal;
@@ -37,32 +38,6 @@ export interface SummateReport {
   skipped: number;
   errored: number;
   totalRowsInRange: number;
-}
-
-const PMID_URL_RE = /pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/;
-const BARE_PMID_RE = /^\s*(\d{4,9})\s*$/;
-
-function parsePmidsFromSourceCells(row: string[]): string[] {
-  const pmids = new Set<string>();
-  for (let c = 7; c <= 11; c += 1) {
-    const cell = row[c] ?? '';
-    if (!cell) continue;
-    const m = PMID_URL_RE.exec(cell);
-    if (m) {
-      pmids.add(m[1]);
-      continue;
-    }
-    const bare = BARE_PMID_RE.exec(cell);
-    if (bare) pmids.add(bare[1]);
-  }
-  return [...pmids];
-}
-
-function isSubtitle(title: string): boolean {
-  return title.startsWith('## ');
-}
-function isGap(title: string): boolean {
-  return /^\(.*\)$/.test(title.trim());
 }
 
 function buildUserText(row: string[], pdfHandles: FileSystemFileHandle[]): string {
@@ -99,13 +74,7 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
   const allRows = await getValues(input.spreadsheetId, `${sheetRef}!A:L`);
   log.append('info', `read ${allRows.length} rows from "${sheetName}"`);
 
-  // 2. Determine range.
-  let startRow = 2;
-  let endRow = allRows.length;
-  if (input.range) {
-    startRow = Math.max(2, input.range.start);
-    endRow = Math.min(endRow, input.range.end);
-  }
+  const { startRow, endRow } = clampRowRange(allRows, input.range);
   if (endRow < startRow) {
     log.append('warn', `empty range (${startRow}-${endRow}), nothing to do`);
     return {
@@ -122,22 +91,17 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
   let errored = 0;
 
   for (let r = startRow; r <= endRow; r += 1) {
-    if (signal.aborted) throw new Error('aborted');
+    signal.throwIfAborted();
     const row = allRows[r - 1] ?? [];
     const title = row[0] ?? '';
 
-    if (!title) {
-      log.append('info', `row ${r}: empty, skipping`);
-      skipped += 1;
-      continue;
-    }
-    if (isSubtitle(title) || isGap(title)) {
-      log.append('info', `row ${r}: subtitle/gap, skipping`);
+    if (isSkippableRow(title)) {
+      log.append('info', `row ${r}: empty/subtitle/gap, skipping`);
       skipped += 1;
       continue;
     }
 
-    const pmids = parsePmidsFromSourceCells(row);
+    const pmids = parsePmidsFromRow(row);
     if (pmids.length === 0) {
       log.append('warn', `row ${r}: no PMIDs in Source columns, skipping`);
       skipped += 1;
@@ -188,7 +152,7 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
           systemPrompt: SUMMATE_SYSTEM_PROMPT,
           userText: buildUserText(row, pdfHandles),
           pdfs,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 16384,
         },
         signal,
       );
@@ -201,7 +165,7 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
             : ''),
       );
     } catch (err) {
-      if (signal.aborted) throw err;
+      signal.throwIfAborted();
       log.append('err', `row ${r}: LLM call failed: ${(err as Error).message}`);
       errored += 1;
       continue;
@@ -260,22 +224,17 @@ export async function runSummateMock(
   const sheetRef = quoteSheet(sheetName);
   const allRows = await getValues(input.spreadsheetId, `${sheetRef}!A:L`);
 
-  let startRow = 2;
-  let endRow = allRows.length;
-  if (input.range) {
-    startRow = Math.max(2, input.range.start);
-    endRow = Math.min(endRow, input.range.end);
-  }
+  const { startRow, endRow } = clampRowRange(allRows, input.range);
 
   let processed = 0;
   let skipped = 0;
 
   const updates: { range: string; values: string[][] }[] = [];
   for (let r = startRow; r <= endRow; r += 1) {
-    if (signal.aborted) throw new Error('aborted');
+    signal.throwIfAborted();
     const row = allRows[r - 1] ?? [];
     const title = row[0] ?? '';
-    if (!title || isSubtitle(title) || isGap(title)) {
+    if (isSkippableRow(title)) {
       skipped += 1;
       continue;
     }

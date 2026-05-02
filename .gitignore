@@ -32,3 +32,4 @@ aicurator.pem
 
 # Local-only quarantine of starter files (Phase 0 cleanup)
 .phase0-removed/
+.git/

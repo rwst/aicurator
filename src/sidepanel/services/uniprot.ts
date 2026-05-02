@@ -17,10 +17,13 @@
 //   - if still ambiguous (≥2 distinct reviewed gene symbols for a label),
 //     leave the name unchanged
 
+import { mapWithLimit } from '../lib/concurrent';
+
 const SPARQL_ENDPOINT = 'https://sparql.uniprot.org/sparql';
 const REST_SEARCH_ENDPOINT = 'https://rest.uniprot.org/uniprotkb/search';
 const PER_QUERY_TIMEOUT_MS = 60_000;
 const REST_TIMEOUT_MS = 15_000;
+const REST_CONCURRENCY = 8;
 
 interface SparqlResponse {
   results?: {
@@ -197,10 +200,10 @@ async function restSearchAll(
   reviewedOnly: boolean,
 ): Promise<Map<string, BindingHit[]>> {
   const out = new Map<string, BindingHit[]>();
-  // Run in parallel — small batches (<100 labels) are within UniProt's
-  // ~25 req/sec rate-limit envelope.
-  const results = await Promise.all(
-    labels.map((l) => restSearch(l, reviewedOnly)),
+  // Cap concurrency to stay under UniProt's per-IP rate limiter; an
+  // unbounded fan-out hits 429s and silently degrades to noMatch.
+  const results = await mapWithLimit(labels, REST_CONCURRENCY, (l) =>
+    restSearch(l, reviewedOnly),
   );
   for (let i = 0; i < labels.length; i += 1) {
     const hits = results[i];

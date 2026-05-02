@@ -18,6 +18,7 @@ import {
   runExtractMock,
 } from '../runners/extract';
 import { makeProvider } from '../llm/provider';
+import { isAbortError } from '../lib/abortError';
 
 const PDF_CAP = 10;
 
@@ -128,7 +129,7 @@ export default function ExtractTab() {
       });
       await setStage('extracted');
     } catch (err) {
-      if ((err as Error).name === 'AbortError' || (err as Error).message === 'aborted') {
+      if (isAbortError(err)) {
         extractLog.append('warn', 'cancelled by user');
       } else {
         extractLog.append('err', (err as Error).message);
@@ -190,10 +191,7 @@ export default function ExtractTab() {
       });
       await setStage('extracted');
     } catch (err) {
-      if (
-        (err as Error).name === 'AbortError' ||
-        (err as Error).message === 'aborted'
-      ) {
+      if (isAbortError(err)) {
         extractLog.append('warn', 'cancelled by user');
       } else {
         extractLog.append('err', (err as Error).message);

@@ -1,27 +1,20 @@
-// Extract runner — orchestrates the Phase-6 pipeline:
-//   1. Read picked PDFs into memory.
-//   2. Copy them into <project>/PDF/ (preserve basenames).
-//   3. LLM call with PDFs + system prompt + JSON schema.
-//   4. Parse + validate JSON.
-//   5. JS-enforced no-fabrication on inline PMIDs.
-//   6. NCBI DOI-batch resolution + title+author fallback.
-//   7. Source ladder per reaction (top-5 refs).
-//   8. Build header + reaction rows.
-//   9. Sheets values:batchUpdate.
-//  10. Magic file stage update.
-//  11. Log breakdown.
+// Extract runner: read picked PDFs, copy to <project>/PDF/, LLM call
+// with system prompt + JSON schema, parse/validate, NCBI batch + per-ref
+// fallback, source-ladder walk, sheet write, stage update.
 
 import type { Log } from '../services/log';
 import type { Provider } from '../llm/provider';
 import { EXTRACT_SYSTEM_PROMPT } from '../prompts/extract.system';
 import { validate } from '../services/jsonSchema';
 import { resolveByDoi, resolveByTitleAuthor } from '../services/ncbi';
+import { mapWithLimit } from '../lib/concurrent';
 import {
   batchUpdateValues,
   getSheetName,
   getValues,
   quoteSheet,
 } from '../services/sheets';
+import { HEADER_ROW } from '../services/sheetRows';
 
 export interface ExtractInput {
   pathwayName: string;
@@ -67,21 +60,6 @@ interface ResolvedRef extends RawReference {
   effectivePmid: string;
   effectivePmidSource: '' | 'inline' | 'esearch:doi' | 'esearch:title-author';
 }
-
-const HEADER_ROW = [
-  'Title',
-  'Summation',
-  'Inputs',
-  'Outputs',
-  'Catalyst',
-  'Regulators',
-  'Reviews',
-  'Source1',
-  'Source2',
-  'Source3',
-  'Source4',
-  'Source5',
-];
 
 const EXTRACT_SCHEMA = {
   type: 'object' as const,
@@ -300,23 +278,22 @@ export interface ExtractReport {
 export async function runExtract(input: ExtractInput): Promise<ExtractReport> {
   const { log, signal } = input;
 
-  // 1. Read PDFs into memory.
   log.append('init', `Extract starting · pathway: "${input.pathwayName}"`);
   log.append('info', `reading ${input.pdfHandles.length} PDFs…`);
   const pdfs: { name: string; bytes: ArrayBuffer }[] = [];
   for (const h of input.pdfHandles) {
-    if (signal.aborted) throw new Error('aborted');
+    signal.throwIfAborted();
     const bytes = await readPdfBytes(h);
     pdfs.push({ name: h.name, bytes });
   }
   log.append('ok', `read ${pdfs.length} PDFs (${pdfs.reduce((s, p) => s + p.bytes.byteLength, 0)} bytes total)`);
 
-  // 2. Copy into <project>/PDF/.
+  // Copy PDFs to the project so subsequent runs can re-read them.
   log.append('info', `copying PDFs into project's PDF/ subdirectory…`);
   await copyPdfsIntoProject(pdfs, input.projectDir);
   log.append('ok', `${pdfs.length} PDFs copied`);
 
-  // 3. LLM call.
+
   log.append('info', `calling provider with ${pdfs.length} PDFs (this may take 1–2 minutes)…`);
   const userText = `Pathway: ${input.pathwayName}
 
@@ -342,7 +319,7 @@ Extract the reaction graph from the attached PDFs. Output the JSON object per th
   // inspect it on parse failure without re-running the (expensive) LLM call.
   await writeDebugFile(input.projectDir, 'extract-response.txt', result.text);
 
-  // 4. Parse + validate.
+
   let parsed: unknown;
   try {
     parsed = extractJsonObject(result.text);
@@ -393,7 +370,7 @@ async function processExtractedOutput(
 ): Promise<ExtractReport> {
   const { log, signal } = ctx;
 
-  // 5. No-fabrication enforcement.
+
   const stripped = stripUnverifiedInlinePmids(output.reactions);
   if (stripped > 0) {
     log.append(
@@ -402,7 +379,7 @@ async function processExtractedOutput(
     );
   }
 
-  // 6. NCBI resolution.
+
   const allRefs: { reactionIdx: number; refIdx: number; ref: RawReference }[] = [];
   output.reactions.forEach((r, ri) => {
     r.references.forEach((ref, refIdx) => {
@@ -437,32 +414,36 @@ async function processExtractedOutput(
   }
 
   // 6b. Title+author fallback for refs with neither inline nor DOI hit.
+  // NCBI's unauthenticated rate limit is 3 req/sec; cap concurrency at 3.
   const taCandidates = allRefs.filter(
     (x) => !x.ref.pmid && x.ref.title && x.ref.firstAuthor,
   );
   let taHits = 0;
-  for (const x of taCandidates) {
-    if (signal.aborted) throw new Error('aborted');
-    try {
-      const res = await resolveByTitleAuthor({
-        title: x.ref.title,
-        firstAuthor: x.ref.firstAuthor,
-        year: x.ref.year || undefined,
-      });
-      if (res.pmid) {
-        x.ref.pmid = res.pmid;
-        x.ref.pmid_source = 'esearch:title-author';
-        taHits += 1;
-      }
-    } catch {
-      /* skip on error */
-    }
-  }
   if (taCandidates.length > 0) {
-    log.append('info', `title+author fallback: ${taHits}/${taCandidates.length} resolved`);
+    signal.throwIfAborted();
+    await mapWithLimit(taCandidates, 3, async (x) => {
+      try {
+        const res = await resolveByTitleAuthor({
+          title: x.ref.title,
+          firstAuthor: x.ref.firstAuthor,
+          year: x.ref.year || undefined,
+        });
+        if (res.pmid) {
+          x.ref.pmid = res.pmid;
+          x.ref.pmid_source = 'esearch:title-author';
+          taHits += 1;
+        }
+      } catch {
+        /* skip on per-ref error */
+      }
+    });
+    log.append(
+      'info',
+      `title+author fallback: ${taHits}/${taCandidates.length} resolved`,
+    );
   }
 
-  // 7. Build resolved-ref view + ladder walk.
+
   const ladderBreakdown = { pubmed: 0, pmc: 0, doi: 0, publisher: 0, blank: 0 };
   const sourceColumns: string[][] = output.reactions.map((r) => {
     const resolved: ResolvedRef[] = r.references.map((ref) => ({
@@ -481,12 +462,12 @@ async function processExtractedOutput(
     return slots;
   });
 
-  // 8. Build sheet rows.
+
   const dataRows: string[][] = output.reactions.map((r, ri) => {
     const slots = sourceColumns[ri];
     return [
       r.title,
-      '', // Summation column — left for Phase 7
+      '', // Summation column — populated by Summate runner
       r.inputs,
       r.outputs,
       r.catalyst,
@@ -500,7 +481,7 @@ async function processExtractedOutput(
     ];
   });
 
-  // 9. Sheet write: header + data.
+
   // Resolve gid → sheet name so we write to the correct tab, not the
   // first sheet by default.
   const sheetName = await getSheetName(ctx.spreadsheetId, ctx.gid);
@@ -522,7 +503,7 @@ async function processExtractedOutput(
   ]);
   log.append('ok', `sheet written`);
 
-  // 10. Build report.
+
   const branches = output.reactions.filter((r) => r.title.startsWith('## ')).length;
   const transports = output.reactions.filter((r) =>
     r.title.toLowerCase().startsWith('translocation of'),

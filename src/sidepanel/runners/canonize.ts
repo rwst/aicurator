@@ -1,6 +1,7 @@
 // Canonize runner — no LLM. Reads the entity-name vocabulary from
-// columns C..F, batches a single UniProt SPARQL query (human-only,
-// reviewed-first), and rewrites A..F in-place.
+// columns C..F, batches a UniProt SPARQL query (human-only,
+// reviewed-first) with REST search fallback, and rewrites A..F
+// in-place.
 
 import type { Log } from '../services/log';
 import {
@@ -10,17 +11,22 @@ import {
   quoteSheet,
 } from '../services/sheets';
 import {
+  compileReplacements,
   parseCell,
   rewriteCell,
   rewriteFreeText,
 } from '../services/entityParser';
 import { resolveEntities } from '../services/uniprot';
 import { isLikelySmallMolecule } from '../services/smallMolecules';
+import {
+  clampRowRange,
+  ENTITY_COL_END,
+  ENTITY_COL_START,
+  isSkippableRow,
+  type RowRange,
+} from '../services/sheetRows';
 
-export interface RowRange {
-  start: number;
-  end: number;
-}
+export type { RowRange };
 
 export interface CanonizeInput {
   spreadsheetId: string;
@@ -40,13 +46,6 @@ export interface CanonizeReport {
   totalRowsInRange: number;
 }
 
-function isSubtitle(t: string): boolean {
-  return t.startsWith('## ');
-}
-function isGap(t: string): boolean {
-  return /^\(.*\)$/.test(t.trim());
-}
-
 export async function runCanonize(
   input: CanonizeInput,
 ): Promise<CanonizeReport> {
@@ -59,13 +58,7 @@ export async function runCanonize(
   const allRows = await getValues(input.spreadsheetId, `${sheetRef}!A:F`);
   log.append('info', `read ${allRows.length} rows from "${sheetName}"`);
 
-  // 2. Determine range.
-  let startRow = 2;
-  let endRow = allRows.length;
-  if (input.range) {
-    startRow = Math.max(2, input.range.start);
-    endRow = Math.min(endRow, input.range.end);
-  }
+  const { startRow, endRow } = clampRowRange(allRows, input.range);
   if (endRow < startRow) {
     log.append('warn', `empty range, nothing to do`);
     return {
@@ -79,13 +72,12 @@ export async function runCanonize(
     };
   }
 
-  // 3. Collect unique bare names from C, D, E, F.
   const bareNames = new Set<string>();
   for (let r = startRow; r <= endRow; r += 1) {
     const row = allRows[r - 1] ?? [];
     const title = row[0] ?? '';
-    if (!title || isSubtitle(title) || isGap(title)) continue;
-    for (let c = 2; c <= 5; c += 1) {
+    if (isSkippableRow(title)) continue;
+    for (let c = ENTITY_COL_START; c <= ENTITY_COL_END; c += 1) {
       const cell = row[c] ?? '';
       const entities = parseCell(cell);
       for (const e of entities) {
@@ -125,8 +117,7 @@ export async function runCanonize(
     );
   }
 
-  // 4. SPARQL — only for the queryable subset.
-  if (signal.aborted) throw new Error('aborted');
+  signal.throwIfAborted();
   log.append(
     'info',
     `querying UniProt for ${queryable.length} candidate proteins (human, reviewed-first): ${queryable.join(', ')}`,
@@ -157,15 +148,15 @@ export async function runCanonize(
     );
   }
 
-  // 5. Build updated rows.
-  if (signal.aborted) throw new Error('aborted');
+  signal.throwIfAborted();
+  const compiled = compileReplacements(resolution.replacements);
   const updates: { range: string; values: string[][] }[] = [];
   for (let r = startRow; r <= endRow; r += 1) {
     const row = allRows[r - 1] ?? [];
     const title = row[0] ?? '';
-    if (!title || isSubtitle(title) || isGap(title)) continue;
-    const a = rewriteFreeText(row[0] ?? '', resolution.replacements);
-    const b = rewriteFreeText(row[1] ?? '', resolution.replacements);
+    if (isSkippableRow(title)) continue;
+    const a = rewriteFreeText(row[0] ?? '', compiled);
+    const b = rewriteFreeText(row[1] ?? '', compiled);
     const c = rewriteCell(row[2] ?? '', resolution.replacements);
     const d = rewriteCell(row[3] ?? '', resolution.replacements);
     const e = rewriteCell(row[4] ?? '', resolution.replacements);

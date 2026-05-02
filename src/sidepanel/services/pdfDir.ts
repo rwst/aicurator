@@ -1,5 +1,5 @@
 // Lists PMID-prefixed PDFs in <project>/PDF/. The merged pmid-tagger
-// (Phase 9) writes files matching PMID-<id>_*.pdf into this directory;
+// in the service worker writes PMID-<id>_*.pdf files here on download;
 // we glob-by-PMID for Summate's per-row PDF lookup.
 
 const PMID_FILE_RE = /^PMID-(\d{4,9})_/;

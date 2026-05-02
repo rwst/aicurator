@@ -4,6 +4,8 @@ import { canonizeLog } from '../services/log';
 import { project, setRunning, setStage } from '../store';
 import { runCanonize, type RowRange } from '../runners/canonize';
 import { runChecks } from '../services/entityParser';
+import { isAbortError } from '../lib/abortError';
+import { parseRowRange } from '../services/sheetRows';
 
 // Run dev-only parser self-checks once on tab load.
 runChecks();
@@ -21,15 +23,9 @@ export default function CanonizeTab() {
     return 'ready';
   });
 
-  const parsedSpan = createMemo<RowRange | null>(() => {
-    if (mode() === 'all') return null;
-    const m = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(spanText());
-    if (!m) return null;
-    const start = parseInt(m[1], 10);
-    const end = parseInt(m[2], 10);
-    if (start < 2 || end < start) return null;
-    return { start, end };
-  });
+  const parsedSpan = createMemo<RowRange | null>(() =>
+    mode() === 'all' ? null : parseRowRange(spanText()),
+  );
 
   const spanIsValid = () => mode() === 'all' || parsedSpan() !== null;
 
@@ -68,10 +64,7 @@ export default function CanonizeTab() {
       });
       await setStage('canonized');
     } catch (err) {
-      if (
-        (err as Error).name === 'AbortError' ||
-        (err as Error).message === 'aborted'
-      ) {
+      if (isAbortError(err)) {
         canonizeLog.append('warn', 'cancelled by user');
       } else {
         canonizeLog.append('err', (err as Error).message);

@@ -96,3 +96,41 @@ Files to touch:
 - A small `pdfToText` service in `src/sidepanel/services/`
 - `src/sidepanel/runners/summate.ts` to consult the cache before
   building each row's request
+
+### Pipeline PDF reads across Summate rows
+
+`src/sidepanel/runners/summate.ts` reads the cited PDFs for each row
+synchronously, then awaits the LLM call, then advances. While the
+60–120s LLM call for row N is in flight, row N+1's PDFs sit untouched
+on disk. A depth-1 pipeline would halve perceived disk-read latency
+across multi-row runs.
+
+Sketch:
+- Maintain a `next` future that pre-loads row N+1's PDFs as soon as
+  row N's LLM call is issued.
+- Await `next` at the top of the next iteration; the read is mostly
+  done.
+- Bound depth at 1 to keep memory steady (PDFs are 5–30MB each).
+
+Skipped during the /simplify pass because state-machine complexity is
+non-trivial for a usability-only win.
+
+### Drop the 5-second poll fallback in SummateTab
+
+`src/sidepanel/tabs/SummateTab.tsx` currently runs both a
+`chrome.downloads.onChanged` listener (instant chip flips) AND a 5-second
+`setInterval` re-scan of `<project>/PDF/`. The interval was meant to
+catch files dropped in via the OS file manager (no `downloads` event
+fires for those).
+
+The interval ticks unconditionally and `setPdfMap(new Map(...))` causes
+every chip to re-evaluate even when nothing changed. Two cleaner paths:
+
+1. Drop the interval entirely. Most curators get PDFs via the integrated
+   tagger (which fires `onChanged`); the rare OS-file-manager drop is
+   handled by the explicit Re-scan button.
+2. Keep the interval but add an echo guard: compare the new map's keys
+   against the previous and only call `setPdfMap` when they differ.
+
+Skipped during the /simplify pass — the current behavior is correct,
+just slightly wasteful.

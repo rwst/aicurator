@@ -23,10 +23,14 @@ import {
 } from '../runners/summate';
 import { makeProvider } from '../llm/provider';
 import { getSheetName, getValues, quoteSheet } from '../services/sheets';
+import { isAbortError } from '../lib/abortError';
+import {
+  isSkippableRow,
+  parsePmidsFromRow,
+  parseRowRange,
+} from '../services/sheetRows';
 
 const POLL_FALLBACK_MS = 5000;
-const PMID_URL_RE = /pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/;
-const BARE_PMID_RE = /^\s*(\d{4,9})\s*$/;
 
 export default function SummateTab() {
   const [error, setError] = createSignal<string | null>(null);
@@ -45,16 +49,9 @@ export default function SummateTab() {
     return 'ready';
   });
 
-  // Parse the span input. Returns null on invalid; { start, end } on valid.
-  const parsedSpan = createMemo<RowRange | null>(() => {
-    if (mode() === 'all') return null;
-    const m = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(spanText());
-    if (!m) return null;
-    const start = parseInt(m[1], 10);
-    const end = parseInt(m[2], 10);
-    if (start < 2 || end < start) return null;
-    return { start, end };
-  });
+  const parsedSpan = createMemo<RowRange | null>(() =>
+    mode() === 'all' ? null : parseRowRange(spanText()),
+  );
 
   const spanIsValid = () => mode() === 'all' || parsedSpan() !== null;
 
@@ -112,7 +109,6 @@ export default function SummateTab() {
     });
   });
 
-  // Re-scan rows whenever the selected project changes
   createEffect(() => {
     void project.selectedName;
     setRowsLoaded(false);
@@ -176,10 +172,7 @@ export default function SummateTab() {
       await setStage('summated');
       void loadSheetRows();
     } catch (err) {
-      if (
-        (err as Error).name === 'AbortError' ||
-        (err as Error).message === 'aborted'
-      ) {
+      if (isAbortError(err)) {
         summateLog.append('warn', 'cancelled by user');
       } else {
         summateLog.append('err', (err as Error).message);
@@ -236,21 +229,10 @@ export default function SummateTab() {
     for (let r = startRow; r <= endRow; r += 1) {
       const row = rows[r - 1] ?? [];
       const title = row[0] ?? '';
-      if (!title) continue;
-      if (title.startsWith('## ') || /^\(.*\)$/.test(title.trim())) continue;
-      const pmids = new Set<string>();
-      for (let c = 7; c <= 11; c += 1) {
-        const cell = row[c] ?? '';
-        if (!cell) continue;
-        const m = PMID_URL_RE.exec(cell);
-        if (m) pmids.add(m[1]);
-        else {
-          const bare = BARE_PMID_RE.exec(cell);
-          if (bare) pmids.add(bare[1]);
-        }
-      }
-      if (pmids.size > 0) {
-        out.push({ rowNum: r, title, pmids: [...pmids] });
+      if (isSkippableRow(title)) continue;
+      const pmids = parsePmidsFromRow(row);
+      if (pmids.length > 0) {
+        out.push({ rowNum: r, title, pmids });
       }
     }
     return out;
