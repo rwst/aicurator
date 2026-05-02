@@ -1,7 +1,36 @@
 import { defineManifest } from '@crxjs/vite-plugin';
+import { readFileSync } from 'node:fs';
+
+// `.env` lookup. We read it manually because `manifest.config.ts` runs
+// in plain Node before Vite's env machinery activates — `process.env`
+// only carries variables actually set in the parent shell, not those in
+// `.env`. So both `AICURATOR_OAUTH_CLIENT_ID=… npm run build` (shell) and
+// a committed-but-gitignored `.env` file work.
+function readDotEnv(name: string): string | undefined {
+  if (process.env[name]) return process.env[name];
+  try {
+    const content = readFileSync('.env', 'utf-8');
+    for (const raw of content.split('\n')) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+      if (m && m[1] === name) return m[2].replace(/^["']|["']$/g, '').trim();
+    }
+  } catch {
+    /* .env may not exist; that's fine */
+  }
+  return undefined;
+}
 
 const OAUTH_CLIENT_ID =
-  process.env.AICURATOR_OAUTH_CLIENT_ID ?? '__REPLACED_AT_BUILD__';
+  readDotEnv('AICURATOR_OAUTH_CLIENT_ID') ?? '__REPLACED_AT_BUILD__';
+
+if (OAUTH_CLIENT_ID === '__REPLACED_AT_BUILD__') {
+  console.warn(
+    '[manifest.config.ts] AICURATOR_OAUTH_CLIENT_ID is not set — Sheets ' +
+      'OAuth will fail at runtime. Add it to .env or export in shell.',
+  );
+}
 
 export default defineManifest({
   manifest_version: 3,

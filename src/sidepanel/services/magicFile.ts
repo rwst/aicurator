@@ -97,3 +97,18 @@ export function newMagicFile(opts: {
     updatedAt: now,
   };
 }
+
+export async function updateMagicFile(
+  projectDir: FileSystemDirectoryHandle,
+  patch: Partial<Omit<MagicFile, 'version' | 'createdAt'>>,
+): Promise<MagicFile> {
+  const current = await readMagicFile(projectDir);
+  if (!current) throw new Error('Magic file missing or invalid');
+  const updated: MagicFile = {
+    ...current,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeMagicFile(projectDir, updated);
+  return updated;
+}

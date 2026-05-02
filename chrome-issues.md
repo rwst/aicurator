@@ -206,7 +206,35 @@ catch.
 
 ---
 
-## Issue 5 — `@crxjs/vite-plugin@2` HMR doesn't auto-reload the service worker or content scripts
+## Issue 5 — `chrome.downloads.download` rejects leaf filenames that start with a dot
+
+### Symptom
+
+```js
+chrome.downloads.download({
+  url: 'data:text/plain,init',
+  filename: 'aicurator/.aicurator-init',
+});
+// runtime.lastError → "Invalid filename"
+```
+
+The same call with `filename: 'aicurator/aicurator-init.txt'` succeeds.
+
+### Diagnosis
+
+Chrome's downloads pipeline treats leaf filenames whose first character
+is `.` as forbidden — likely a defense against drive-by writes of dot-
+files / hidden files inside the Downloads tree. The rejection is
+silent except via `chrome.runtime.lastError`. There's no UI prompt.
+
+### Mitigations shipped
+
+- `bootstrapAicuratorDir` in `services/projectsDir.ts` writes
+  `aicurator/aicurator-init.txt` instead of a hidden sentinel.
+
+---
+
+## Issue 6 — `@crxjs/vite-plugin@2` HMR doesn't auto-reload the service worker or content scripts
 
 ### Symptom
 

@@ -17,6 +17,7 @@ import {
   type ParsedSheetUrl,
   type ProjectMeta,
 } from '../services/projectsDir';
+import { updateMagicFile, type Stage } from '../services/magicFile';
 
 export type Provider = 'Anthropic' | 'OpenAI' | 'OpenRouter';
 export const PROVIDERS: readonly Provider[] = [
@@ -78,12 +79,16 @@ const [saveStatus, setSaveStatus] = createSignal<SaveStatus>('idle');
 // dirPermission: the FS-Access permission state for the projects-dir
 // handle. 'unpicked' means the user has not yet granted any directory.
 export type DirPermission = PermissionState | 'unpicked';
+export type Running = 'none' | 'extract' | 'summate' | 'canonize';
 
 export interface ProjectsState {
   dirHandle: FileSystemDirectoryHandle | null;
   dirPermission: DirPermission;
   list: ProjectMeta[];
   selectedName: string | null;
+  pathwayName: string;
+  stage: Stage;
+  running: Running;
 }
 
 const [project, setProject] = createStore<ProjectsState>({
@@ -91,9 +96,18 @@ const [project, setProject] = createStore<ProjectsState>({
   dirPermission: 'unpicked',
   list: [],
   selectedName: null,
+  pathwayName: '',
+  stage: 'none',
+  running: 'none',
 });
 
-export { settings, saveStatus, project };
+// Picked PDFs for Extract live as a separate signal, not in the createStore.
+// FS handles don't proxy cleanly through Solid's deep store proxies.
+const [extractPdfHandles, setExtractPdfHandles] = createSignal<
+  FileSystemFileHandle[]
+>([]);
+
+export { settings, saveStatus, project, extractPdfHandles };
 
 // ── Hydration + listeners ────────────────────────────────
 function isProvider(v: unknown): v is Provider {
@@ -235,11 +249,19 @@ export async function hydrateProjectsDir(): Promise<void> {
   }
 }
 
+function applyMetaToStore(name: string | null): void {
+  if (!name) {
+    setProject({ pathwayName: '', stage: 'none' });
+    return;
+  }
+  const meta = project.list.find((p) => p.name === name);
+  if (meta) setProject({ pathwayName: meta.pathwayName, stage: meta.stage });
+}
+
 export async function refreshProjectList(): Promise<void> {
   if (!project.dirHandle || project.dirPermission !== 'granted') return;
   const list = await listProjects(project.dirHandle);
   setProject('list', list);
-  // Restore previously-selected project name from sync storage.
   const stored = await syncStorage.get([SELECTED_PROJECT_KEY]);
   const candidate = stored[SELECTED_PROJECT_KEY];
   let next: string | null = null;
@@ -249,12 +271,27 @@ export async function refreshProjectList(): Promise<void> {
     next = list[0].name;
   }
   setProject('selectedName', next);
-  if (next) await syncStorage.set({ [SELECTED_PROJECT_KEY]: next });
+  applyMetaToStore(next);
+  if (next) {
+    await syncStorage.set({ [SELECTED_PROJECT_KEY]: next });
+    await localStorage.set({ activeProject: next });
+  } else {
+    await localStorage.set({ activeProject: '' });
+  }
 }
 
 export async function setSelectedProject(name: string | null): Promise<void> {
   setProject('selectedName', name);
-  if (name) await syncStorage.set({ [SELECTED_PROJECT_KEY]: name });
+  applyMetaToStore(name);
+  // PDF picks are session-state, not project-state — clear them on switch.
+  setExtractPdfHandles([]);
+  if (name) {
+    await syncStorage.set({ [SELECTED_PROJECT_KEY]: name });
+    // Tell the service worker which project to route downloads into.
+    await localStorage.set({ activeProject: name });
+  } else {
+    await localStorage.set({ activeProject: '' });
+  }
 }
 
 export async function grantProjectsDir(): Promise<void> {
@@ -372,6 +409,93 @@ export async function deleteProjectAction(name: string): Promise<void> {
 
 // Re-export for convenience.
 export { setStoredHandle };
+
+// ── Per-project field helpers ────────────────────────────
+
+async function withProjectDir<T>(
+  fn: (projectDir: FileSystemDirectoryHandle) => Promise<T>,
+): Promise<T> {
+  if (
+    !project.dirHandle ||
+    project.dirPermission !== 'granted' ||
+    !project.selectedName
+  ) {
+    throw new Error('No active project');
+  }
+  const projectDir = await project.dirHandle.getDirectoryHandle(
+    project.selectedName,
+  );
+  return await fn(projectDir);
+}
+
+const PATHWAY_DEBOUNCE_MS = 250;
+let pathwayTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setPathwayName(name: string): void {
+  setProject('pathwayName', name);
+  if (pathwayTimer) clearTimeout(pathwayTimer);
+  pathwayTimer = setTimeout(() => {
+    pathwayTimer = null;
+    void persistPathwayName(name);
+  }, PATHWAY_DEBOUNCE_MS);
+}
+
+async function persistPathwayName(name: string): Promise<void> {
+  try {
+    await withProjectDir((dir) => updateMagicFile(dir, { pathwayName: name }));
+    // Refresh list metadata to keep ProjectMeta in sync.
+    setProject(
+      'list',
+      project.list.map((p) =>
+        p.name === project.selectedName ? { ...p, pathwayName: name } : p,
+      ),
+    );
+  } catch (err) {
+    console.warn('[aicurator] persist pathway name failed:', err);
+  }
+}
+
+export async function setStage(stage: Stage): Promise<void> {
+  setProject('stage', stage);
+  await withProjectDir((dir) => updateMagicFile(dir, { stage }));
+  setProject(
+    'list',
+    project.list.map((p) =>
+      p.name === project.selectedName ? { ...p, stage } : p,
+    ),
+  );
+}
+
+export function setRunning(r: Running): void {
+  setProject('running', r);
+}
+
+export function addExtractPdfs(handles: FileSystemFileHandle[]): void {
+  const cap = 10;
+  const cur = extractPdfHandles();
+  const have = new Set(cur.map((h) => h.name));
+  const toAdd: FileSystemFileHandle[] = [];
+  for (const h of handles) {
+    if (have.has(h.name)) continue;
+    if (cur.length + toAdd.length >= cap) break;
+    toAdd.push(h);
+  }
+  if (toAdd.length > 0) {
+    setExtractPdfHandles([...cur, ...toAdd]);
+  }
+  return;
+}
+
+export function removeExtractPdf(name: string): void {
+  setExtractPdfHandles(extractPdfHandles().filter((h) => h.name !== name));
+}
+
+export function clearExtractPdfs(): void {
+  setExtractPdfHandles([]);
+}
+
+// Avoid unused-var error from the bootstrapAicuratorDir re-export not used here.
+void bootstrapAicuratorDir;
 
 // Clear logs whenever the user switches between projects.
 // (Pure hydrate from null → name doesn't trigger this — that path keeps

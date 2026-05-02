@@ -40,14 +40,17 @@ export async function clearStoredHandle(): Promise<void> {
 
 // ── Bootstrap ────────────────────────────────────────────
 // Pre-create <Downloads>/aicurator/ via a non-empty data URL written
-// through chrome.downloads. Empty base64 data URLs have crashed the
-// renderer in earlier attempts; a tiny plaintext payload is stable.
+// through chrome.downloads. Notes:
+//   - Empty base64 data URLs crash the renderer (see chrome-issues.md).
+//   - chrome.downloads also rejects filenames whose leaf starts with a
+//     dot ("Invalid filename") — so we use "aicurator-init.txt"
+//     instead of ".aicurator-init".
 export async function bootstrapAicuratorDir(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     chrome.downloads.download(
       {
         url: 'data:text/plain,aicurator-init',
-        filename: 'aicurator/.aicurator-init',
+        filename: 'aicurator/aicurator-init.txt',
         conflictAction: 'uniquify',
         saveAs: false,
       },

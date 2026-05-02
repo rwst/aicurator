@@ -16,14 +16,17 @@ import { hydrateAllLogs } from './services/log';
 export default function App() {
   const [activeTab, setActiveTab] = createSignal<TabIndex>(0);
 
-  // Phase 4 gating. Final shape lands as we wire stage/PDFs in later phases.
-  // - Main: always
-  // - Extract: project selected (Phase 6 will additionally require >=1 PDF)
-  // - Summate: stage in {extracted, ...} — Phase 7
-  // - Canonize: stage in {summated, ...} — Phase 8
   const isEnabled = (idx: TabIndex) => {
     if (idx === 0) return true;
     if (idx === 1) return project.selectedName !== null;
+    if (idx === 2)
+      return (
+        project.stage === 'extracted' ||
+        project.stage === 'summated' ||
+        project.stage === 'canonized'
+      );
+    if (idx === 3)
+      return project.stage === 'summated' || project.stage === 'canonized';
     return false;
   };
 

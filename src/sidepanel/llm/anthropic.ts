@@ -3,7 +3,7 @@ import { arrayBufferToBase64 } from '../lib/base64';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 16384;
 
 interface AnthropicContentBlock {
   type: 'text' | 'document';

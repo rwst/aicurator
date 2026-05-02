@@ -2,7 +2,7 @@ import type { LlmCall, LlmResult, Provider } from './provider';
 import { arrayBufferToBase64 } from '../lib/base64';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 16384;
 
 export interface OpenAILikeOptions {
   baseUrl?: string;
