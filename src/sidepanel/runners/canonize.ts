@@ -15,6 +15,7 @@ import {
   rewriteFreeText,
 } from '../services/entityParser';
 import { resolveEntities } from '../services/uniprot';
+import { isLikelySmallMolecule } from '../services/smallMolecules';
 
 export interface RowRange {
   start: number;
@@ -31,6 +32,7 @@ export interface CanonizeInput {
 
 export interface CanonizeReport {
   uniqueEntities: number;
+  skippedSmallMolecules: number;
   resolved: number;
   noMatch: number;
   ambiguous: number;
@@ -68,6 +70,7 @@ export async function runCanonize(
     log.append('warn', `empty range, nothing to do`);
     return {
       uniqueEntities: 0,
+      skippedSmallMolecules: 0,
       resolved: 0,
       noMatch: 0,
       ambiguous: 0,
@@ -99,6 +102,7 @@ export async function runCanonize(
     log.append('warn', 'no parseable entity names found, nothing to do');
     return {
       uniqueEntities: 0,
+      skippedSmallMolecules: 0,
       resolved: 0,
       noMatch: 0,
       ambiguous: 0,
@@ -107,13 +111,33 @@ export async function runCanonize(
     };
   }
 
-  // 4. SPARQL.
+  // 3b. Partition: small molecules / ions skip the SPARQL call.
+  const smallMolecules: string[] = [];
+  const queryable: string[] = [];
+  for (const n of bareNames) {
+    if (isLikelySmallMolecule(n)) smallMolecules.push(n);
+    else queryable.push(n);
+  }
+  if (smallMolecules.length > 0) {
+    log.append(
+      'info',
+      `skipping ${smallMolecules.length} likely small molecules / ions: ${smallMolecules.slice(0, 8).join(', ')}${smallMolecules.length > 8 ? '…' : ''}`,
+    );
+  }
+
+  // 4. SPARQL — only for the queryable subset.
   if (signal.aborted) throw new Error('aborted');
-  log.append('info', 'querying UniProt SPARQL (human, reviewed-first)…');
+  log.append(
+    'info',
+    `querying UniProt for ${queryable.length} candidate proteins (human, reviewed-first): ${queryable.join(', ')}`,
+  );
   const sparqlStart = Date.now();
   let resolution;
   try {
-    resolution = await resolveEntities([...bareNames]);
+    resolution =
+      queryable.length > 0
+        ? await resolveEntities(queryable)
+        : { replacements: new Map(), noMatch: [], ambiguous: [] };
   } catch (err) {
     log.append('err', `UniProt query failed: ${(err as Error).message}`);
     throw err;
@@ -172,6 +196,7 @@ export async function runCanonize(
 
   return {
     uniqueEntities: bareNames.size,
+    skippedSmallMolecules: smallMolecules.length,
     resolved: resolution.replacements.size,
     noMatch: resolution.noMatch.length,
     ambiguous: resolution.ambiguous.length,

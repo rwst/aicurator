@@ -51,3 +51,48 @@ Possible resolutions:
 Currently the workaround is "keep the setting ON during AICurator
 sessions, toggle off otherwise". Track until the in-extension viewer
 ships.
+
+### PDF → text preprocessing for Summate
+
+**Motivation.** Summate currently sends each row's cited PDFs to the
+provider verbatim as base64 document blocks. Two costs follow:
+
+- **Tokens.** A single 12-page primary-research PDF can run 30–60k
+  input tokens through Anthropic's document parser. Per row this is
+  fine; across a 50-row Summate run it dominates the bill.
+- **OpenRouter PDF parsing fee.** When the curator picks a model that
+  doesn't natively accept PDFs (e.g. open-weights via OpenRouter),
+  OpenRouter's server-side parser charges a small per-page fee on top
+  of the tokens.
+
+**Proposal.** Pre-extract plain text from each PDF once, on first sight
+in `<project>/PDF/`, and send the text instead. Two implementation
+paths:
+
+- **(a) Native messaging + `pdftotext`** — register a Native Messaging
+  Host that runs `pdftotext -layout <in> -` (poppler-utils). Pros: best
+  text quality on real review PDFs (preserves columns, equations
+  mostly readable). Cons: each user installs the host manifest and
+  has poppler installed; cross-platform packaging.
+- **(b) In-browser via `pdfjs-dist`** — bundle pdf.js, extract text
+  pages on demand. Pros: zero user-side install, single deliverable.
+  Cons: text quality somewhat worse than poppler on multi-column
+  reviews; ~1 MB additional bundle weight.
+
+User preference (2026-05-02): **pdftotext if installed**. So the
+likely shape is path (a), with a graceful fallback. Order of operations:
+
+1. Service worker tries to ping the native host on first PDF read.
+2. If host responds, cache the text alongside the PDF as
+   `<basename>.txt` and use that for all subsequent Summate calls
+   touching that PMID. Re-extract if the PDF mtime changes.
+3. If host is missing, fall back to sending the PDF as today.
+4. Surface the active mode in the Summate tab UI ("Mode: pdftotext"
+   vs "Mode: native PDF blocks") so the curator knows which cost
+   profile applies.
+
+Files to touch:
+- `src/background/native-host/manifest.json` (host registration shape)
+- A small `pdfToText` service in `src/sidepanel/services/`
+- `src/sidepanel/runners/summate.ts` to consult the cache before
+  building each row's request

@@ -58,6 +58,7 @@ export default defineManifest({
     'https://sheets.googleapis.com/*',
     'https://eutils.ncbi.nlm.nih.gov/*',
     'https://sparql.uniprot.org/*',
+    'https://rest.uniprot.org/*',
     'https://pmc.ncbi.nlm.nih.gov/*',
     'https://pubmed.ncbi.nlm.nih.gov/*',
   ],
