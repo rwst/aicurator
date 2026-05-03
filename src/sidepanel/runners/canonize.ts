@@ -81,7 +81,10 @@ export async function runCanonize(
       const cell = row[c] ?? '';
       const entities = parseCell(cell);
       for (const e of entities) {
-        if (!e.isGap && e.bareName) bareNames.add(e.bareName);
+        if (e.isGap) continue;
+        for (const comp of e.components) {
+          if (comp.bareName) bareNames.add(comp.bareName);
+        }
       }
     }
   }

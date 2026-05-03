@@ -1,19 +1,27 @@
 // Parser for Reactome reaction-cell entity strings. Splits a pipe-
 // delimited cell into entities, peels off scaffolding (regulator
-// polarity, stoichiometry, compartment), exposes the bare name for
-// canonical-replacement lookup, and re-attaches the scaffolding on
-// writeback.
+// polarity, stoichiometry, compartment), and further splits each
+// entity's name on `:` into one or more colon-separated complex
+// components — each is a separate canonical-lookup key, so individual
+// proteins inside a complex (e.g. "LANA oligomer:HHV8 ori-P") are
+// canonized independently.
 //
 // Examples:
-//   "+ AMP [cytosol] | - ATP [cytosol]"    → 2 entities
-//   "2 ATP [cytosol] | glucose [cytosol]"  → 2 entities
+//   "+ AMP [cytosol] | - ATP [cytosol]"    → 2 entities, 1 component each
+//   "2 ATP [cytosol] | glucose [cytosol]"  → 2 entities, 1 component each
 //   "(NF-kB [nucleoplasm])"                → 1 gap entity (left alone)
+//   "p65:p50 [nucleoplasm]"                → 1 entity with 2 components
+
+export interface ParsedComponent {
+  stoich: string;       // "2 " | "" (per-component leading stoichiometry)
+  bareName: string;     // "AMP" — the canonical-lookup key
+}
 
 export interface ParsedEntity {
   raw: string;          // original token verbatim
   prefix: string;       // "+ " | "- " | "" (regulator polarity)
-  stoich: string;       // "2 " | "" (leading integer stoichiometry)
-  bareName: string;     // "AMP" — the canonical-lookup key
+  stoich: string;       // "2 " | "" (entity-level leading stoichiometry)
+  components: ParsedComponent[]; // 1+ colon-separated parts
   compartment: string;  // " [cytosol]" with leading space, or ""
   isGap: boolean;       // true for fully-parenthesized "(...)"
 }
@@ -23,6 +31,17 @@ const STOICH_RE = /^(\d+\s+)/;
 const COMPARTMENT_RE = /\s*(\[[^\]]+\])\s*$/;
 const GAP_RE = /^\(.+\)$/;
 
+function parseComponent(raw: string): ParsedComponent {
+  let s = raw.trim();
+  let stoich = '';
+  const m = STOICH_RE.exec(s);
+  if (m) {
+    stoich = m[1];
+    s = s.slice(m[0].length);
+  }
+  return { stoich, bareName: s.trim() };
+}
+
 export function parseEntity(raw: string): ParsedEntity {
   const trimmed = raw.trim();
   if (GAP_RE.test(trimmed)) {
@@ -30,7 +49,7 @@ export function parseEntity(raw: string): ParsedEntity {
       raw,
       prefix: '',
       stoich: '',
-      bareName: '',
+      components: [],
       compartment: '',
       isGap: true,
     };
@@ -54,11 +73,12 @@ export function parseEntity(raw: string): ParsedEntity {
     compartment = ' ' + compM[1];
     s = s.slice(0, compM.index).trimEnd();
   }
+  const components = s.split(':').map(parseComponent);
   return {
     raw,
     prefix,
     stoich,
-    bareName: s.trim(),
+    components,
     compartment,
     isGap: false,
   };
@@ -75,8 +95,11 @@ export function reassemble(p: ParsedEntity, replacement: string): string {
   return `${p.prefix}${p.stoich}${replacement}${p.compartment}`;
 }
 
-// Apply a bareName→canonical map to one entity-column cell. Entities
-// without a replacement keep their original raw form.
+// Apply a bareName→canonical map to one entity-column cell. Each
+// colon-separated component is looked up independently. Entities (or
+// individual components) without a replacement keep their original
+// form; entities whose components were all unchanged keep their raw
+// form verbatim to avoid whitespace normalization.
 export function rewriteCell(
   cell: string,
   replacements: Map<string, string>,
@@ -84,8 +107,18 @@ export function rewriteCell(
   const entities = parseCell(cell);
   const out = entities.map((e) => {
     if (e.isGap) return e.raw;
-    const canonical = replacements.get(e.bareName);
-    return canonical ? reassemble(e, canonical) : e.raw;
+    let anyChange = false;
+    const rebuilt = e.components
+      .map((c) => {
+        const canonical = replacements.get(c.bareName);
+        if (canonical && canonical !== c.bareName) {
+          anyChange = true;
+          return `${c.stoich}${canonical}`;
+        }
+        return `${c.stoich}${c.bareName}`;
+      })
+      .join(':');
+    return anyChange ? reassemble(e, rebuilt) : e.raw;
   });
   return out.join(' | ');
 }
@@ -128,19 +161,41 @@ export function rewriteFreeText(
 
 // Dev-only assertions. Run via `runChecks()` from the runner during dev.
 export function runChecks(): void {
-  const cases: { input: string; expectedBare: string; isGap: boolean }[] = [
-    { input: 'AMP [cytosol]', expectedBare: 'AMP', isGap: false },
-    { input: '+ AMP [cytosol]', expectedBare: 'AMP', isGap: false },
-    { input: '- ATP [cytosol]', expectedBare: 'ATP', isGap: false },
-    { input: '2 ATP [cytosol]', expectedBare: 'ATP', isGap: false },
-    { input: '2 ATP', expectedBare: 'ATP', isGap: false },
-    { input: 'NF-kB', expectedBare: 'NF-kB', isGap: false },
-    { input: '(NF-kB [nucleoplasm])', expectedBare: '', isGap: true },
-    { input: 'LANA oligomer:HHV8 ori-P [nucleoplasm]', expectedBare: 'LANA oligomer:HHV8 ori-P', isGap: false },
+  const cases: {
+    input: string;
+    expectedComponents: string[]; // bareName per component
+    isGap: boolean;
+  }[] = [
+    { input: 'AMP [cytosol]', expectedComponents: ['AMP'], isGap: false },
+    { input: '+ AMP [cytosol]', expectedComponents: ['AMP'], isGap: false },
+    { input: '- ATP [cytosol]', expectedComponents: ['ATP'], isGap: false },
+    { input: '2 ATP [cytosol]', expectedComponents: ['ATP'], isGap: false },
+    { input: '2 ATP', expectedComponents: ['ATP'], isGap: false },
+    { input: 'NF-kB', expectedComponents: ['NF-kB'], isGap: false },
+    { input: '(NF-kB [nucleoplasm])', expectedComponents: [], isGap: true },
+    {
+      input: 'LANA oligomer:HHV8 ori-P [nucleoplasm]',
+      expectedComponents: ['LANA oligomer', 'HHV8 ori-P'],
+      isGap: false,
+    },
+    {
+      input: 'p65:p50 [nucleoplasm]',
+      expectedComponents: ['p65', 'p50'],
+      isGap: false,
+    },
+    {
+      input: '2 ATP:3 Mg [cytosol]',
+      expectedComponents: ['ATP', 'Mg'],
+      isGap: false,
+    },
   ];
   for (const c of cases) {
     const p = parseEntity(c.input);
-    if (p.isGap !== c.isGap || p.bareName !== c.expectedBare) {
+    const got = p.components.map((cc) => cc.bareName);
+    const same =
+      got.length === c.expectedComponents.length &&
+      got.every((g, i) => g === c.expectedComponents[i]);
+    if (p.isGap !== c.isGap || !same) {
       console.error(
         '[entityParser] check failed for',
         JSON.stringify(c.input),
