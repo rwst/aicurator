@@ -21,11 +21,12 @@ import {
 } from '../services/projectsDir';
 import { updateMagicFile, type Stage } from '../services/magicFile';
 
-export type Provider = 'Anthropic' | 'OpenAI' | 'OpenRouter';
+export type Provider = 'Anthropic' | 'OpenAI' | 'OpenRouter' | 'Google';
 export const PROVIDERS: readonly Provider[] = [
   'Anthropic',
   'OpenAI',
   'OpenRouter',
+  'Google',
 ] as const;
 
 export interface Settings {

@@ -17,5 +17,9 @@ export function makeOpenRouterProvider(
       'HTTP-Referer': chrome.runtime.getURL('/'),
       'X-Title': 'AICurator',
     },
+    // OpenRouter normalises this passthrough across upstream providers
+    // (Anthropic thinking, OpenAI reasoning_effort, Gemini thinkingConfig).
+    // Models without reasoning support silently ignore the field.
+    extraBody: () => ({ reasoning: { effort: 'high' } }),
   });
 }

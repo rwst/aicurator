@@ -1,9 +1,9 @@
-// Provider abstraction for LLM calls. Three concrete providers ship in
-// v2601: Anthropic, OpenAI, OpenRouter. Each is a thin browser fetch
+// Provider abstraction for LLM calls. Each is a thin browser fetch
 // wrapper — no SDKs, no service-worker proxy.
 
 import type { Provider as ProviderName } from '../store';
 import { makeAnthropicProvider } from './anthropic';
+import { makeGoogleProvider } from './google';
 import { makeOpenAIProvider } from './openai';
 import { makeOpenRouterProvider } from './openrouter';
 
@@ -49,5 +49,7 @@ export function makeProvider(settings: ProviderSettings): Provider {
       return makeOpenAIProvider(settings.apiKey, settings.modelName);
     case 'OpenRouter':
       return makeOpenRouterProvider(settings.apiKey, settings.modelName);
+    case 'Google':
+      return makeGoogleProvider(settings.apiKey, settings.modelName);
   }
 }

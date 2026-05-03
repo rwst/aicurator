@@ -56,6 +56,7 @@ export default defineManifest({
     'https://api.openai.com/*',
     'https://api.anthropic.com/*',
     'https://openrouter.ai/*',
+    'https://generativelanguage.googleapis.com/*',
     'https://sheets.googleapis.com/*',
     'https://eutils.ncbi.nlm.nih.gov/*',
     'https://sparql.uniprot.org/*',

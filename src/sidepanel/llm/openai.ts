@@ -4,10 +4,21 @@ import { arrayBufferToBase64 } from '../lib/base64';
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MAX_TOKENS = 16384;
 
+// OpenAI reasoning models. `reasoning_effort` and `max_completion_tokens`
+// only apply to these — older Chat Completions models (gpt-4*, gpt-3.5-*)
+// reject both, so we gate by model-name prefix. The OpenAI provider
+// uses this directly; OpenRouter overrides via `extraBody` since its
+// model names are namespaced (`openai/o3`, `anthropic/claude-…`).
+const OPENAI_REASONING_MODELS = /^(o1|o3|o4|gpt-5)/i;
+
 export interface OpenAILikeOptions {
   baseUrl?: string;
   extraHeaders?: Record<string, string>;
   providerLabel?: string; // for error messages
+  // Caller can inject extra request-body fields based on model name.
+  // OpenRouter uses this to always send `reasoning: { effort: 'high' }`
+  // as a normalised passthrough across upstream providers.
+  extraBody?: (modelName: string) => Record<string, unknown>;
 }
 
 interface OpenAIChatResponse {
@@ -27,7 +38,9 @@ interface OpenAIRequestBody {
     role: 'system' | 'user';
     content: string | OpenAIUserContent[];
   }[];
-  max_tokens: number;
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
   response_format?: {
     type: 'json_schema';
     json_schema: { name: string; schema: object; strict?: boolean };
@@ -58,20 +71,31 @@ export function makeOpenAIProvider(
       }
       userContent.push({ type: 'text', text: req.userText });
 
+      const tokenCap = req.maxOutputTokens ?? DEFAULT_MAX_TOKENS;
+      const isReasoning = OPENAI_REASONING_MODELS.test(modelName);
       const body: OpenAIRequestBody = {
         model: modelName,
         messages: [
           { role: 'system', content: req.systemPrompt },
           { role: 'user', content: userContent },
         ],
-        max_tokens: req.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
       };
+      if (isReasoning) {
+        body.max_completion_tokens = tokenCap;
+        body.reasoning_effort = 'high';
+      } else {
+        body.max_tokens = tokenCap;
+      }
 
       if (req.schema) {
         body.response_format = {
           type: 'json_schema',
           json_schema: { name: 'output', schema: req.schema, strict: true },
         };
+      }
+
+      if (options.extraBody) {
+        Object.assign(body, options.extraBody(modelName));
       }
 
       const resp = await fetch(`${baseUrl}/chat/completions`, {

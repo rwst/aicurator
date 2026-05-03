@@ -5,6 +5,14 @@ const ANTHROPIC_VERSION = '2023-06-01';
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MAX_TOKENS = 16384;
 
+// Models that accept the `thinking` parameter. We turn extended thinking
+// on at max budget for any of these; older models would reject the
+// param so we only send it when the name matches.
+const THINKING_MODELS =
+  /^claude-(opus-4|sonnet-4|haiku-4|3-7-sonnet)/i;
+const THINKING_BUDGET_TOKENS = 24000;
+const THINKING_MAX_TOKENS = 32000;
+
 interface AnthropicContentBlock {
   type: 'text' | 'document';
   text?: string;
@@ -13,6 +21,14 @@ interface AnthropicContentBlock {
     media_type: 'application/pdf';
     data: string;
   };
+}
+
+interface AnthropicRequestBody {
+  model: string;
+  max_tokens: number;
+  system: string;
+  messages: { role: 'user'; content: AnthropicContentBlock[] }[];
+  thinking?: { type: 'enabled'; budget_tokens: number };
 }
 
 interface AnthropicResponse {
@@ -36,12 +52,22 @@ export function makeAnthropicProvider(
       }
       content.push({ type: 'text', text: req.userText });
 
-      const body = {
+      const isThinking = THINKING_MODELS.test(modelName);
+      const maxTokens = isThinking
+        ? Math.max(req.maxOutputTokens ?? THINKING_MAX_TOKENS, THINKING_MAX_TOKENS)
+        : (req.maxOutputTokens ?? DEFAULT_MAX_TOKENS);
+      const body: AnthropicRequestBody = {
         model: modelName,
-        max_tokens: req.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
+        max_tokens: maxTokens,
         system: req.systemPrompt,
         messages: [{ role: 'user', content }],
       };
+      if (isThinking) {
+        body.thinking = {
+          type: 'enabled',
+          budget_tokens: THINKING_BUDGET_TOKENS,
+        };
+      }
 
       const resp = await fetch(ENDPOINT, {
         method: 'POST',
