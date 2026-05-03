@@ -17,6 +17,7 @@ import {
   clampRowRange,
   isSkippableRow,
   parsePmidsFromRow,
+  SUMMATE_READ_RANGE_END,
   type RowRange,
 } from '../services/sheetRows';
 
@@ -71,7 +72,10 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
   // 1. Resolve sheet name and read rows.
   const sheetName = await getSheetName(input.spreadsheetId, input.gid);
   const sheetRef = quoteSheet(sheetName);
-  const allRows = await getValues(input.spreadsheetId, `${sheetRef}!A:L`);
+  const allRows = await getValues(
+    input.spreadsheetId,
+    `${sheetRef}!A:${SUMMATE_READ_RANGE_END}`,
+  );
   log.append('info', `read ${allRows.length} rows from "${sheetName}"`);
 
   const { startRow, endRow } = clampRowRange(allRows, input.range);
@@ -222,7 +226,10 @@ export async function runSummateMock(
 
   const sheetName = await getSheetName(input.spreadsheetId, input.gid);
   const sheetRef = quoteSheet(sheetName);
-  const allRows = await getValues(input.spreadsheetId, `${sheetRef}!A:L`);
+  const allRows = await getValues(
+    input.spreadsheetId,
+    `${sheetRef}!A:${SUMMATE_READ_RANGE_END}`,
+  );
 
   const { startRow, endRow } = clampRowRange(allRows, input.range);
 

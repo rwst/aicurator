@@ -28,6 +28,7 @@ import {
   isSkippableRow,
   parsePmidsFromRow,
   parseRowRange,
+  SUMMATE_READ_RANGE_END,
 } from '../services/sheetRows';
 
 const POLL_FALLBACK_MS = 5000;
@@ -127,7 +128,10 @@ export default function SummateTab() {
     try {
       const sheetName = await getSheetName(meta.spreadsheetId, meta.gid);
       const sheetRef = quoteSheet(sheetName);
-      const rows = await getValues(meta.spreadsheetId, `${sheetRef}!A:L`);
+      const rows = await getValues(
+        meta.spreadsheetId,
+        `${sheetRef}!A:${SUMMATE_READ_RANGE_END}`,
+      );
       setSheetRows(rows);
       setRowsLoaded(true);
     } catch (err) {

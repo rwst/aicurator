@@ -21,9 +21,27 @@ export const HEADER_ROW: string[] = [
   'Source5',
 ];
 
-// Source columns H..L → indices 7..11.
+// Extract emits at most 5 sources per reaction (H..L). Summate, however,
+// allows the curator to extend a row with additional PubMed links by
+// hand to the right of the existing Source cells. Cap at MAX_SOURCES so
+// the Sheets read range stays bounded.
+export const MAX_SOURCES = 30;
 export const SOURCE_COL_START = 7;
-export const SOURCE_COL_END = 11;
+export const SOURCE_COL_END = SOURCE_COL_START + MAX_SOURCES - 1;
+
+// A1-notation column letter for SOURCE_COL_END (defaults to 'AK' at
+// 30 sources). Recompute if SOURCE_COL_END changes.
+export function colIndexToLetter(idx: number): string {
+  let n = idx;
+  let out = '';
+  while (true) {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+    if (n < 0) break;
+  }
+  return out;
+}
+export const SUMMATE_READ_RANGE_END = colIndexToLetter(SOURCE_COL_END);
 
 // Entity columns C..F → indices 2..5.
 export const ENTITY_COL_START = 2;
