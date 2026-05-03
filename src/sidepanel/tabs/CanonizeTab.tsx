@@ -2,6 +2,12 @@ import { Show, createMemo, createSignal } from 'solid-js';
 import ProcessTab, { type BadgeState } from './ProcessTab';
 import { canonizeLog } from '../services/log';
 import { project, setRunning, setStage } from '../store';
+import {
+  rowSpanMode,
+  rowSpanText,
+  setRowSpanMode,
+  setRowSpanText,
+} from '../store/rowSpan';
 import { runCanonize, type RowRange } from '../runners/canonize';
 import { runChecks } from '../services/entityParser';
 import { isAbortError } from '../lib/abortError';
@@ -12,8 +18,10 @@ runChecks();
 
 export default function CanonizeTab() {
   const [error, setError] = createSignal<string | null>(null);
-  const [mode, setMode] = createSignal<'all' | 'span'>('all');
-  const [spanText, setSpanText] = createSignal('');
+  const mode = rowSpanMode;
+  const setMode = setRowSpanMode;
+  const spanText = rowSpanText;
+  const setSpanText = setRowSpanText;
   let activeAbort: AbortController | null = null;
 
   const hasProject = () => project.selectedName !== null;

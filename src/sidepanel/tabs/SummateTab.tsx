@@ -15,6 +15,12 @@ import {
   setStage,
   settings,
 } from '../store';
+import {
+  rowSpanMode,
+  rowSpanText,
+  setRowSpanMode,
+  setRowSpanText,
+} from '../store/rowSpan';
 import { listPmidPdfs, watchDownloads } from '../services/pdfDir';
 import { probeMode, type Mode } from '../services/pdfText';
 import {
@@ -36,8 +42,10 @@ const POLL_FALLBACK_MS = 5000;
 
 export default function SummateTab() {
   const [error, setError] = createSignal<string | null>(null);
-  const [mode, setMode] = createSignal<'all' | 'span'>('all');
-  const [spanText, setSpanText] = createSignal('');
+  const mode = rowSpanMode;
+  const setMode = setRowSpanMode;
+  const spanText = rowSpanText;
+  const setSpanText = setRowSpanText;
   const [pdfMap, setPdfMap] = createSignal<Map<string, FileSystemFileHandle>>(
     new Map(),
   );
