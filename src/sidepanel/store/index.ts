@@ -499,50 +499,30 @@ export function clearExtractPdfs(): void {
 // Avoid unused-var error from the bootstrapAicuratorDir re-export not used here.
 void bootstrapAicuratorDir;
 
-// ── Active-sheet auto-detection ──────────────────────────
+// ── Active-sheet match (display-only) ────────────────────
+// The ActiveProjectFooter uses this to show a "Switch to: <project>"
+// button when the focused Chrome tab is a Sheets URL that matches some
+// project other than the currently-selected one. Project selection
+// only changes via the dropdown or the explicit Switch button click —
+// never via tab activation alone.
 
-function pathwayDirty(): boolean {
-  if (!project.selectedName) {
-    return project.pathwayName.trim().length > 0;
+const [activeSheetMatch, setActiveSheetMatch] = createSignal<string | null>(
+  null,
+);
+export { activeSheetMatch };
+
+export async function refreshActiveSheetMatch(): Promise<void> {
+  if (project.dirPermission !== 'granted') {
+    setActiveSheetMatch(null);
+    return;
   }
-  const meta = project.list.find((p) => p.name === project.selectedName);
-  return project.pathwayName !== (meta?.pathwayName ?? '');
-}
-
-function hasPendingExtractState(): boolean {
-  return extractPdfHandles().length > 0 || pathwayDirty();
-}
-
-// Mount-time detection. Sheet match → select that project. Sheet but no
-// match → clear selection (per Q1 spec). Non-sheet → leave whatever
-// refreshProjectList restored from chrome.storage.sync (Q6).
-export async function detectActiveSheetMatch(): Promise<void> {
-  if (project.dirPermission !== 'granted') return;
   const parsed = await getActiveTabSheetUrl();
-  if (!parsed) return;
-  const matched = findProjectByExactSheet(project.list, parsed);
-  if (matched) {
-    if (matched.name !== project.selectedName) {
-      await setSelectedProject(matched.name);
-    }
-  } else if (project.selectedName !== null) {
-    await setSelectedProject(null);
+  if (!parsed) {
+    setActiveSheetMatch(null);
+    return;
   }
-}
-
-// Live-tracking handler. Additive-only: only ever sets a project, never
-// clears (Q3). Skipped during runs (Q2 running guard), on non-sheet tabs
-// (Q2 non-sheet guard), and when Extract has pending unsaved state (Q7).
-export async function liveTrackTabChange(): Promise<void> {
-  if (project.running !== 'none') return;
-  if (project.dirPermission !== 'granted') return;
-  const parsed = await getActiveTabSheetUrl();
-  if (!parsed) return;
   const matched = findProjectByExactSheet(project.list, parsed);
-  if (!matched) return;
-  if (matched.name === project.selectedName) return;
-  if (hasPendingExtractState()) return;
-  await setSelectedProject(matched.name);
+  setActiveSheetMatch(matched?.name ?? null);
 }
 
 // Clear logs whenever the user switches between projects.
@@ -554,5 +534,16 @@ createRoot(() => {
     const cur = project.selectedName;
     if (last !== null && cur !== last) void clearAllLogs();
     last = cur;
+  });
+});
+
+// Keep the footer's active-sheet match in sync whenever the project
+// list changes (re-grant after panel re-open, Create, Delete) — the
+// initial mount-time refresh runs before the list exists if FS-Access
+// permission needs re-granting.
+createRoot(() => {
+  createEffect(() => {
+    void project.list;
+    void refreshActiveSheetMatch();
   });
 });

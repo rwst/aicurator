@@ -22,15 +22,80 @@ input, select { font-family: inherit; color: inherit; }
   overflow: hidden;
 }
 
-/* ── Vertical tab strip ─────────────────────────────────── */
-.tabs {
+/* ── Vertical tab strip column (tabs + active-project footer) ── */
+.tabs-column {
   width: 92px;
   flex: 0 0 92px;
   background: var(--bg-tabs);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+}
+.tabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
   padding: 4px 0;
+}
+
+/* ── Active project footer (under the four tab buttons) ─── */
+.active-project-footer {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 6px 12px;
+  border-top: 1px solid var(--border);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 10px;
+  color: var(--text);
+  overflow: hidden;
+}
+.apf-label {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+.apf-name {
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.apf-switch {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 6px 6px 7px;
+  cursor: pointer;
+  font-family: Arial, Helvetica, sans-serif;
+  text-align: left;
+  transition: background 120ms;
+}
+.apf-switch:hover { background: var(--accent-deep); }
+.apf-switch-label {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+.apf-switch-target {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tab {
   position: relative;

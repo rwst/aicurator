@@ -1,5 +1,5 @@
 import { Show, createMemo, createSignal } from 'solid-js';
-import ProcessTab, { type RunStatus } from './ProcessTab';
+import ProcessTab, { type BadgeState } from './ProcessTab';
 import { canonizeLog } from '../services/log';
 import { project, setRunning, setStage } from '../store';
 import { runCanonize, type RowRange } from '../runners/canonize';
@@ -16,20 +16,8 @@ export default function CanonizeTab() {
   const [spanText, setSpanText] = createSignal('');
   let activeAbort: AbortController | null = null;
 
-  const status = createMemo<RunStatus>(() => {
-    if (project.running === 'canonize') return 'running';
-    if (
-      project.selectedName === null ||
-      (project.stage !== 'summated' && project.stage !== 'canonized')
-    )
-      return 'locked';
-    return 'ready';
-  });
-
   const hasProject = () => project.selectedName !== null;
-  const startVisible = () =>
-    hasProject() &&
-    (project.stage === 'summated' || project.stage === 'canonized');
+  const startVisible = () => hasProject();
 
   const parsedSpan = createMemo<RowRange | null>(() =>
     mode() === 'all' ? null : parseRowRange(spanText()),
@@ -37,10 +25,18 @@ export default function CanonizeTab() {
 
   const spanIsValid = () => mode() === 'all' || parsedSpan() !== null;
 
+  const badge = createMemo<BadgeState | null>(() => {
+    if (project.running === 'canonize')
+      return { kind: 'running', text: 'running…' };
+    if (project.selectedName === null)
+      return { kind: 'lock', text: 'no project selected' };
+    if (mode() === 'span' && !spanIsValid())
+      return { kind: 'lock', text: 'invalid span' };
+    return null;
+  });
+
   const canStart = () =>
-    project.running === 'none' &&
-    (project.stage === 'summated' || project.stage === 'canonized') &&
-    spanIsValid();
+    project.running === 'none' && hasProject() && spanIsValid();
 
   const onStart = async () => {
     setError(null);
@@ -90,7 +86,7 @@ export default function CanonizeTab() {
     <ProcessTab
       name="Canonize"
       topic="canonize"
-      status={status}
+      badge={badge}
       log={canonizeLog}
     >
       <div class="canonize-form">

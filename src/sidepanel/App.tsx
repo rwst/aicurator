@@ -1,15 +1,15 @@
 import { Match, Switch, createSignal, onCleanup, onMount } from 'solid-js';
 import TabStrip, { type TabIndex } from './components/TabStrip';
+import ActiveProjectFooter from './components/ActiveProjectFooter';
 import InstanceGuard from './components/InstanceGuard';
 import MainTab from './tabs/MainTab';
 import ExtractTab from './tabs/ExtractTab';
 import SummateTab from './tabs/SummateTab';
 import CanonizeTab from './tabs/CanonizeTab';
 import {
-  detectActiveSheetMatch,
   hydrateProjectsDir,
   hydrateSettings,
-  liveTrackTabChange,
+  refreshActiveSheetMatch,
   subscribeToStorageChanges,
 } from './store';
 import { hydrateAllLogs } from './services/log';
@@ -17,8 +17,8 @@ import { hydrateAllLogs } from './services/log';
 export default function App() {
   const [activeTab, setActiveTab] = createSignal<TabIndex>(0);
 
-  // All tabs always enabled per the redesign — within-tab UI hides Start
-  // when prerequisites aren't met.
+  // All tabs always enabled — within-tab gating handles unmet preconditions
+  // (hidden actions + locked-with-reason badge).
   const isEnabled = (_idx: TabIndex) => true;
 
   onMount(() => {
@@ -27,11 +27,11 @@ export default function App() {
     void hydrateAllLogs();
     void (async () => {
       await hydrateProjectsDir();
-      await detectActiveSheetMatch();
+      await refreshActiveSheetMatch();
     })();
 
-    const onTabActivated = () => {
-      void liveTrackTabChange();
+    const refresh = () => {
+      void refreshActiveSheetMatch();
     };
     const onTabUpdated = (
       _tabId: number,
@@ -39,12 +39,12 @@ export default function App() {
       tab: chrome.tabs.Tab,
     ) => {
       if (!changeInfo.url || !tab.active) return;
-      void liveTrackTabChange();
+      refresh();
     };
-    chrome.tabs.onActivated.addListener(onTabActivated);
+    chrome.tabs.onActivated.addListener(refresh);
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     onCleanup(() => {
-      chrome.tabs.onActivated.removeListener(onTabActivated);
+      chrome.tabs.onActivated.removeListener(refresh);
       chrome.tabs.onUpdated.removeListener(onTabUpdated);
     });
   });
@@ -52,11 +52,14 @@ export default function App() {
   return (
     <InstanceGuard>
       <div class="panel" aria-label="AICurator side panel">
-        <TabStrip
-          activeTab={activeTab}
-          isEnabled={isEnabled}
-          onSelect={setActiveTab}
-        />
+        <div class="tabs-column">
+          <TabStrip
+            activeTab={activeTab}
+            isEnabled={isEnabled}
+            onSelect={setActiveTab}
+          />
+          <ActiveProjectFooter />
+        </div>
         <section class="content">
           <Switch>
             <Match when={activeTab() === 0}>

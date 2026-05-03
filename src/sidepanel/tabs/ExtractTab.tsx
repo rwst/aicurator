@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
-import ProcessTab, { type RunStatus } from './ProcessTab';
+import ProcessTab, { type BadgeState } from './ProcessTab';
 import { extractLog } from '../services/log';
 import {
   addExtractPdfs,
@@ -26,10 +26,18 @@ export default function ExtractTab() {
   const [error, setError] = createSignal<string | null>(null);
   let activeAbort: AbortController | null = null;
 
-  const status = createMemo<RunStatus>(() => {
-    if (project.running === 'extract') return 'running';
-    if (project.selectedName === null) return 'locked';
-    return 'ready';
+  const badge = createMemo<BadgeState | null>(() => {
+    if (project.running === 'extract')
+      return { kind: 'running', text: 'running…' };
+    if (project.selectedName === null)
+      return { kind: 'lock', text: 'no project selected' };
+    if (project.pathwayName.trim().length === 0)
+      return { kind: 'lock', text: 'enter pathway name' };
+    if (extractPdfHandles().length === 0)
+      return { kind: 'lock', text: 'add at least one PDF' };
+    if (settings.apiKey.length === 0 || settings.modelName.length === 0)
+      return { kind: 'lock', text: 'configure provider in Settings' };
+    return null;
   });
 
   const canStart = () =>
@@ -210,7 +218,7 @@ export default function ExtractTab() {
   };
 
   return (
-    <ProcessTab name="Extract" topic="extract" status={status} log={extractLog}>
+    <ProcessTab name="Extract" topic="extract" badge={badge} log={extractLog}>
       <div class="extract-form">
         <label class="field-label" for="pathway-name">
           PATHWAY NAME OR DESCRIPTION

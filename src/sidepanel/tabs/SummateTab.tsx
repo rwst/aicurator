@@ -7,7 +7,7 @@ import {
   onCleanup,
   onMount,
 } from 'solid-js';
-import ProcessTab, { type RunStatus } from './ProcessTab';
+import ProcessTab, { type BadgeState } from './ProcessTab';
 import { summateLog } from '../services/log';
 import {
   project,
@@ -43,16 +43,8 @@ export default function SummateTab() {
   const [rowsLoaded, setRowsLoaded] = createSignal(false);
   let activeAbort: AbortController | null = null;
 
-  const status = createMemo<RunStatus>(() => {
-    if (project.running === 'summate') return 'running';
-    if (project.selectedName === null || project.stage === 'none')
-      return 'locked';
-    return 'ready';
-  });
-
-  const startVisible = () =>
-    project.selectedName !== null && project.stage !== 'none';
   const hasProject = () => project.selectedName !== null;
+  const startVisible = () => hasProject();
 
   const parsedSpan = createMemo<RowRange | null>(() =>
     mode() === 'all' ? null : parseRowRange(spanText()),
@@ -60,15 +52,60 @@ export default function SummateTab() {
 
   const spanIsValid = () => mode() === 'all' || parsedSpan() !== null;
 
+  const chipRows = createMemo(() => {
+    if (!rowsLoaded() || sheetRows().length === 0) return [];
+    const rows = sheetRows();
+    let startRow = 2;
+    let endRow = rows.length;
+    const span = parsedSpan();
+    if (span) {
+      startRow = Math.max(2, span.start);
+      endRow = Math.min(endRow, span.end);
+    }
+    const out: { rowNum: number; title: string; pmids: string[] }[] = [];
+    for (let r = startRow; r <= endRow; r += 1) {
+      const row = rows[r - 1] ?? [];
+      const title = row[0] ?? '';
+      if (isSkippableRow(title)) continue;
+      const pmids = parsePmidsFromRow(row);
+      if (pmids.length > 0) {
+        out.push({ rowNum: r, title, pmids });
+      }
+    }
+    return out;
+  });
+
+  const summatableRowCount = createMemo(() => {
+    if (!hasProject()) return 0;
+    return chipRows().filter((rr) =>
+      rr.pmids.some((pmid) => pdfMap().has(pmid)),
+    ).length;
+  });
+
+  const badge = createMemo<BadgeState | null>(() => {
+    if (project.running === 'summate')
+      return { kind: 'running', text: 'running…' };
+    if (project.selectedName === null)
+      return { kind: 'lock', text: 'no project selected' };
+    if (settings.apiKey.length === 0 || settings.modelName.length === 0)
+      return { kind: 'lock', text: 'configure provider in Settings' };
+    if (mode() === 'span' && !spanIsValid())
+      return { kind: 'lock', text: 'invalid span' };
+    if (summatableRowCount() === 0)
+      return { kind: 'lock', text: 'no PDFs for selected rows' };
+    return null;
+  });
+
   const canStart = () =>
     project.running === 'none' &&
-    project.stage !== 'none' &&
+    hasProject() &&
     settings.apiKey.length > 0 &&
     settings.modelName.length > 0 &&
-    spanIsValid();
+    spanIsValid() &&
+    summatableRowCount() > 0;
 
   const canMock = () =>
-    project.running === 'none' && project.stage !== 'none' && spanIsValid();
+    project.running === 'none' && hasProject() && spanIsValid();
 
   const rescanPdfs = async () => {
     if (!project.dirHandle || !project.selectedName) return;
@@ -218,33 +255,8 @@ export default function SummateTab() {
 
   const onCancel = () => activeAbort?.abort();
 
-  // Build chip rows for the selected range — one per data row that has
-  // PMIDs.
-  const chipRows = createMemo(() => {
-    if (!rowsLoaded() || sheetRows().length === 0) return [];
-    const rows = sheetRows();
-    let startRow = 2;
-    let endRow = rows.length;
-    const span = parsedSpan();
-    if (span) {
-      startRow = Math.max(2, span.start);
-      endRow = Math.min(endRow, span.end);
-    }
-    const out: { rowNum: number; title: string; pmids: string[] }[] = [];
-    for (let r = startRow; r <= endRow; r += 1) {
-      const row = rows[r - 1] ?? [];
-      const title = row[0] ?? '';
-      if (isSkippableRow(title)) continue;
-      const pmids = parsePmidsFromRow(row);
-      if (pmids.length > 0) {
-        out.push({ rowNum: r, title, pmids });
-      }
-    }
-    return out;
-  });
-
   return (
-    <ProcessTab name="Summate" topic="summate" status={status} log={summateLog}>
+    <ProcessTab name="Summate" topic="summate" badge={badge} log={summateLog}>
       <div class="summate-form">
         <div class="row-select">
           <label class="radio">
