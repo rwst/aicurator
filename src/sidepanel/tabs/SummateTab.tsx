@@ -181,18 +181,6 @@ export default function SummateTab() {
       setError('Project metadata not found.');
       return;
     }
-    if (
-      project.stage === 'summated' ||
-      project.stage === 'canonized'
-    ) {
-      if (
-        !window.confirm(
-          'Re-running Summate will overwrite the Summation column for the selected rows.\n\nContinue?',
-        )
-      )
-        return;
-    }
-
     let provider;
     try {
       provider = makeProvider({

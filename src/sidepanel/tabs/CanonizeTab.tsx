@@ -55,15 +55,6 @@ export default function CanonizeTab() {
       setError('Project metadata not found.');
       return;
     }
-    if (project.stage === 'canonized') {
-      if (
-        !window.confirm(
-          'Re-running Canonize will overwrite entity names in columns A–F for the selected rows.\n\nContinue?',
-        )
-      )
-        return;
-    }
-
     activeAbort = new AbortController();
     setRunning('canonize');
     try {
