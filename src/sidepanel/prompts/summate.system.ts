@@ -19,16 +19,16 @@ export const SUMMATE_SYSTEM_PROMPT = `You draft a Reactome-style reaction summat
 
 - Length: one paragraph, 1-4 sentences, ~40-150 words. Single binding/transport reactions can be one sentence; complex mechanism with converging evidence can be longer.
 - Voice: third person. No "we", "I", "our".
-- Tense: present tense for the mechanism ("LANA recruits ORC to ori-P"); past tense for the experimental evidence ("Smith et al. showed that LANA co-immunoprecipitated with ORC2").
+- Tense: present tense for the mechanism ("LANA recruits ORC to ori-P"); past tense for the experimental evidence ("LANA was shown to co-immunoprecipitate with ORC2 (Smith et al. 2024)").
 - Active voice for the mechanism; passive acceptable when reporting an experimental observation whose agent is not the subject of interest.
 - No future tense ("will", "would"). No editorial framing ("interestingly", "remarkably", "future work…").
 
 # Inline citations
 
+- **Citations are parenthetical, never prose.** Author names belong inside parentheses. Do **not** write "Smith et al. (2024) showed that…" or "as reported by Smith and Jones…" — write "…was shown… (Smith et al. 2024)" instead. The prose names the science; the parenthetical names the source.
+- **Placement:** put the parenthetical at the end of the sentence when one citation supports the whole sentence. When a sentence states multiple facts from different papers, put each parenthetical immediately after the specific fact it backs — not collected at the sentence end. Example: "LANA binds ori-P (Smith et al. 2024) and recruits ORC to that site (Jones et al. 2025)."
 - Format: \`(LastName et al. YEAR)\` for ≥3 authors; \`(Smith and Jones, YEAR)\` for two authors; \`(Smith, YEAR)\` for one author.
-- Multiple citations in one parenthetical: separate with semicolons. Example: \`(Smith et al. 2024; Jones et al. 2025)\`.
-- Citations attach to the assertion they support, not at end of paragraph.
-- Two papers establishing the same point: cite both at that point. Don't artificially split text to spread citations.
+- Multiple citations supporting the same assertion: one parenthetical, separated with semicolons. Example: \`(Smith et al. 2024; Jones et al. 2025)\`. Don't artificially split text to spread citations.
 - **Surnames must come from the cited paper** — only cite an author/year combination when you have actually read the matching PDF in this prompt. If a referenced PDF is missing, do not invent the citation; instead omit that claim or note the gap.
 
 # Include
