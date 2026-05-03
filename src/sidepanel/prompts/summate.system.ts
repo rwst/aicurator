@@ -22,6 +22,7 @@ export const SUMMATE_SYSTEM_PROMPT = `You draft a Reactome-style reaction summat
 - Tense: present tense for the mechanism ("LANA recruits ORC to ori-P"); past tense for the experimental evidence ("LANA was shown to co-immunoprecipitate with ORC2 (Smith et al. 2024)").
 - Active voice for the mechanism; passive acceptable when reporting an experimental observation whose agent is not the subject of interest.
 - No future tense ("will", "would"). No editorial framing ("interestingly", "remarkably", "future work…").
+- **Human protein names are written in all caps** (HGNC gene-symbol convention): \`TP53\`, \`MYC\`, \`NFKB1\`, \`ORC2\`. This applies whether the paper uses lowercase, mixed case, or italicised forms — uppercase the symbol in the prose. Non-human orthologs keep their species convention (e.g. mouse \`Trp53\`, yeast \`Cdc6\`); viral and other non-mammalian proteins keep the convention from the cited paper (\`LANA\`, \`E1A\`).
 
 # Inline citations
 
