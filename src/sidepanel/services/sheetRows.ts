@@ -65,15 +65,25 @@ export interface RowRange {
   end: number;
 }
 
-const SPAN_RE = /^\s*(\d+)\s*-\s*(\d+)\s*$/;
+const RANGE_RE = /^\s*(\d+)\s*-\s*(\d+)\s*$/;
+const SINGLE_RE = /^\s*(\d+)\s*$/;
 
+// Accepts "3-7" (rows 3 through 7 inclusive) or "3" (just row 3 = 3-3).
 export function parseRowRange(text: string): RowRange | null {
-  const m = SPAN_RE.exec(text);
-  if (!m) return null;
-  const start = parseInt(m[1], 10);
-  const end = parseInt(m[2], 10);
-  if (start < 2 || end < start) return null;
-  return { start, end };
+  const range = RANGE_RE.exec(text);
+  if (range) {
+    const start = parseInt(range[1], 10);
+    const end = parseInt(range[2], 10);
+    if (start < 2 || end < start) return null;
+    return { start, end };
+  }
+  const single = SINGLE_RE.exec(text);
+  if (single) {
+    const n = parseInt(single[1], 10);
+    if (n < 2) return null;
+    return { start: n, end: n };
+  }
+  return null;
 }
 
 // Clamp a user-provided range against actual sheet content.
