@@ -4,6 +4,64 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2602 — 2026-05-03
+
+Post-v2601 follow-ups: Summate PDF→text preprocessing, redesigned tab gating, span-input ergonomics, wider source-column read.
+
+### Added
+
+- **Native libpoppler text-extraction host** (optional). Small C
+  binary at `scripts/native-host/aicurator-pdftotext.c` linked
+  against `libpoppler-glib` + `json-glib`. Compiled and registered by
+  `scripts/install-native-host.sh` (writes manifest into Chrome
+  and Chromium `NativeMessagingHosts/` dirs under `~/.config/`). The
+  sidepanel pings it once per session via
+  `chrome.runtime.connectNative`; if available, Summate extracts each
+  cited PDF to text once via `poppler_document_new_from_bytes` +
+  `poppler_page_get_text`, caches the result as `<basename>.txt` next
+  to the PDF (re-extracts when the PDF mtime is newer), and splices
+  the text into the user prompt instead of sending the raw PDF as a
+  document block. Mixed-mode per row: PDFs with no cache and no
+  active host fall back to document-block mode; successful
+  extractions in the same row are still sent as inline text. The
+  Summate tab's PDF directory line surfaces the active mode
+  (`Mode: libpoppler text` vs `Mode: native PDF blocks`). Host is
+  GPL-2.0 (links libpoppler); the rest of the extension stays
+  Apache-2.0; the two are separated by stdio IPC. Wire format is
+  4-byte-LE-prefixed JSON; PDF bytes are sent in 512 KB base64 chunks.
+- `nativeMessaging` permission added to the manifest.
+- `services/pdfText.ts` (probeMode + getOrExtractText), and
+  `loadCitedSources` helper in `runners/summate.ts`.
+
+### Changed
+
+- **All process tabs always available.** Tab availability is no
+  longer derived from project stage; Start is gated per-tab via
+  contextual badges (`no project selected`, `enter pathway name`,
+  `add at least one PDF`, `configure provider in Settings`,
+  `no PDFs for selected rows`, `invalid span`, `running…`).
+- **Active-project footer** under the tab strip shows the selected
+  project plus a `Switch to: <name>` button when the active sheet's
+  project differs from the current selection. Footer reactively
+  refreshes when `project.list` changes (e.g. after FS Access
+  permission re-grant repopulates the list).
+- **Row-span input** accepts both `3-7` and bare `3` (= 3-3).
+- **Summate reads up to 30 source columns** (H..AK) instead of 5.
+  Centralised in `services/sheetRows.ts` as `MAX_SOURCES = 30` plus
+  an A1-letter helper; `parsePmidsFromRow` and the chip-grid
+  loader pick up the wider range automatically. Extract still only
+  writes Source1..Source5 — curators can hand-extend rows with
+  additional PMIDs to the right and Summate will read them.
+
+### Fixed
+
+- TDZ traps in Summate/Canonize: `createMemo` evaluates eagerly, so
+  memos must be declared after their dependencies. Reordered the
+  `parsedSpan → spanIsValid → chipRows → summatableRowCount → badge
+  → canStart/canMock` chain in SummateTab and the analogous chain
+  in CanonizeTab.
+
+
 ## v2601 — 2026-05-02
 
 First end-to-end functional release. Manifest version `26.1.0`.

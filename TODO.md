@@ -52,50 +52,28 @@ Currently the workaround is "keep the setting ON during AICurator
 sessions, toggle off otherwise". Track until the in-extension viewer
 ships.
 
-### PDF → text preprocessing for Summate
+### pdfjs-dist fallback for PDF → text (when libpoppler host absent)
 
-**Motivation.** Summate currently sends each row's cited PDFs to the
-provider verbatim as base64 document blocks. Two costs follow:
+The current libpoppler-glib native host (see `scripts/install-native-host.sh`)
+covers the case where the curator has poppler dev libs installed. For
+curators who don't, Summate falls back to "send PDFs as document blocks
+to the provider" — same as the original behavior.
 
-- **Tokens.** A single 12-page primary-research PDF can run 30–60k
-  input tokens through Anthropic's document parser. Per row this is
-  fine; across a 50-row Summate run it dominates the bill.
-- **OpenRouter PDF parsing fee.** When the curator picks a model that
-  doesn't natively accept PDFs (e.g. open-weights via OpenRouter),
-  OpenRouter's server-side parser charges a small per-page fee on top
-  of the tokens.
+A future improvement is an in-browser fallback via `pdfjs-dist`:
 
-**Proposal.** Pre-extract plain text from each PDF once, on first sight
-in `<project>/PDF/`, and send the text instead. Two implementation
-paths:
+- Tier 1 (½ day): `getTextContent()` + naive Y-then-X concat. Fine on
+  single-column manuscripts; breaks on 2-column reviews.
+- Tier 2 (3–5 days): add column detection (histogram x-positions →
+  vertical gutters → sort within columns). ~70–80% of pdftotext
+  quality on standard journal layouts.
 
-- **(a) Native messaging + `pdftotext`** — register a Native Messaging
-  Host that runs `pdftotext -layout <in> -` (poppler-utils). Pros: best
-  text quality on real review PDFs (preserves columns, equations
-  mostly readable). Cons: each user installs the host manifest and
-  has poppler installed; cross-platform packaging.
-- **(b) In-browser via `pdfjs-dist`** — bundle pdf.js, extract text
-  pages on demand. Pros: zero user-side install, single deliverable.
-  Cons: text quality somewhat worse than poppler on multi-column
-  reviews; ~1 MB additional bundle weight.
+Tier 2 is the right target if the fallback turns out to matter. Tier 3
+(matching pdftotext) is impractical clean-room; the bridge path already
+covers that quality for users who install poppler.
 
-User preference (2026-05-02): **pdftotext if installed**. So the
-likely shape is path (a), with a graceful fallback. Order of operations:
-
-1. Service worker tries to ping the native host on first PDF read.
-2. If host responds, cache the text alongside the PDF as
-   `<basename>.txt` and use that for all subsequent Summate calls
-   touching that PMID. Re-extract if the PDF mtime changes.
-3. If host is missing, fall back to sending the PDF as today.
-4. Surface the active mode in the Summate tab UI ("Mode: pdftotext"
-   vs "Mode: native PDF blocks") so the curator knows which cost
-   profile applies.
-
-Files to touch:
-- `src/background/native-host/manifest.json` (host registration shape)
-- A small `pdfToText` service in `src/sidepanel/services/`
-- `src/sidepanel/runners/summate.ts` to consult the cache before
-  building each row's request
+Bundle cost: ~1 MB extra. Activation logic: only kick in when
+`probeMode()` returns `'pdf-blocks'` and the curator has opted into
+text mode in Settings.
 
 ### Pipeline PDF reads across Summate rows
 

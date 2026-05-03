@@ -16,6 +16,7 @@ import {
   settings,
 } from '../store';
 import { listPmidPdfs, watchDownloads } from '../services/pdfDir';
+import { probeMode, type Mode } from '../services/pdfText';
 import {
   runSummate,
   runSummateMock,
@@ -42,6 +43,7 @@ export default function SummateTab() {
   );
   const [sheetRows, setSheetRows] = createSignal<string[][]>([]);
   const [rowsLoaded, setRowsLoaded] = createSignal(false);
+  const [extractMode, setExtractMode] = createSignal<Mode | 'probing'>('probing');
   let activeAbort: AbortController | null = null;
 
   const hasProject = () => project.selectedName !== null;
@@ -141,6 +143,7 @@ export default function SummateTab() {
 
   // Wire downloads listener + 5s poll fallback while the tab is mounted.
   onMount(() => {
+    void probeMode().then(setExtractMode);
     void rescanPdfs();
     void loadSheetRows();
     const teardownWatch = watchDownloads(() => {
@@ -200,6 +203,12 @@ export default function SummateTab() {
       const projectDir = await project.dirHandle.getDirectoryHandle(
         project.selectedName,
       );
+      let pdfDir: FileSystemDirectoryHandle | null = null;
+      try {
+        pdfDir = await projectDir.getDirectoryHandle('PDF');
+      } catch {
+        /* PDF subdir absent — runner will skip text caching */
+      }
       // Refresh PDF list immediately before run so we don't miss recent
       // downloads.
       const freshPdfMap = await listPmidPdfs(projectDir);
@@ -209,6 +218,7 @@ export default function SummateTab() {
         spreadsheetId: meta.spreadsheetId,
         gid: meta.gid,
         projectDir,
+        pdfDir,
         pdfMap: freshPdfMap,
         range: parsedSpan(),
         provider,
@@ -302,7 +312,14 @@ export default function SummateTab() {
             <span>
               PDF directory: <code>{project.selectedName}/PDF/</code> ·{' '}
               <strong>{pdfMap().size}</strong> PMID-prefixed PDF
-              {pdfMap().size === 1 ? '' : 's'}
+              {pdfMap().size === 1 ? '' : 's'} · Mode:{' '}
+              <strong>
+                {extractMode() === 'probing'
+                  ? '…'
+                  : extractMode() === 'pdftotext'
+                    ? 'libpoppler text'
+                    : 'native PDF blocks'}
+              </strong>
             </span>
             <button
               type="button"

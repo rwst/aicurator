@@ -41,6 +41,12 @@ in `chrome-issues.md`.
 - An API key for **Anthropic**, **OpenAI**, or **OpenRouter** (whichever
   provider you select in Settings).
 - Node.js 20+ and npm 10+ for builds.
+- *(Optional, for Summate)* `libpoppler-glib` and `libjson-glib` development
+  headers + `gcc`. With these installed, Summate extracts PDF text once
+  via libpoppler and caches it as `<basename>.txt` next to each PDF,
+  cutting per-row provider tokens substantially. Without them Summate
+  falls back to sending PDFs as document blocks (original behavior).
+  See [Native host setup](#native-host-setup-optional).
 
 
 ## Quickstart
@@ -72,6 +78,42 @@ Subsequent updates: `git pull && npm run build`, then reload the
 extension card in `chrome://extensions`. (Side-panel HMR works during
 `npm run dev`, but service-worker and content-script changes require a
 manual reload — known `@crxjs` limitation.)
+
+
+### Native host setup (optional)
+
+The Summate tab can ship row-cited PDFs to the LLM as either (a)
+already-extracted plain text or (b) raw PDF document blocks. Path (a)
+needs a small native messaging host that links libpoppler-glib:
+
+```bash
+# Debian/Ubuntu:
+sudo apt install libpoppler-glib-dev libjson-glib-dev
+
+# Fedora:
+sudo dnf install poppler-glib-devel json-glib-devel
+
+# Arch:
+sudo pacman -S poppler-glib json-glib
+
+# openSUSE:
+sudo zypper install poppler-glib-devel json-glib-devel
+
+# then:
+./scripts/install-native-host.sh
+```
+
+The script compiles `scripts/native-host/aicurator-pdftotext.c` to
+`~/.local/bin/aicurator-pdftotext` and writes the host manifest into
+each Chrome / Chromium config dir it finds under `~/.config/`. Reload
+the AICurator extension afterwards. The Summate tab's PDF-directory
+line will then read **Mode: libpoppler text** (vs **native PDF blocks**
+when the host is missing).
+
+The native host is GPL-2.0 (it links libpoppler); the rest of the
+extension stays Apache-2.0. The two communicate over stdio, which the
+GPL FAQ recognises as separate-process IPC, so the licenses don't mix
+in either direction.
 
 
 ## Google Cloud setup

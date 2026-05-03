@@ -13,6 +13,7 @@ import {
   quoteSheet,
 } from '../services/sheets';
 import { pmidFromFilename } from '../services/pdfDir';
+import { getOrExtractText } from '../services/pdfText';
 import {
   clampRowRange,
   isSkippableRow,
@@ -27,6 +28,10 @@ export interface SummateInput {
   spreadsheetId: string;
   gid: string;
   projectDir: FileSystemDirectoryHandle;
+  // PDF/ subdir (where .pdf and cached .txt siblings live). Null when
+  // the project hasn't created a PDF/ folder yet — in that case we skip
+  // text caching and send PDFs as-is.
+  pdfDir: FileSystemDirectoryHandle | null;
   pdfMap: Map<string, FileSystemFileHandle>;
   range: RowRange | null;
   provider: Provider;
@@ -41,28 +46,58 @@ export interface SummateReport {
   totalRowsInRange: number;
 }
 
-function buildUserText(row: string[], pdfHandles: FileSystemFileHandle[]): string {
-  const pdfList = pdfHandles
-    .map((h) => `- ${h.name} (PMID ${pmidFromFilename(h.name) ?? '?'})`)
+// Per-row cited source: either pre-extracted text (Q3 path: spliced
+// inline into userText) or raw PDF bytes (provider attaches as a
+// document block). Mixed within one row is fine.
+type CitedSource =
+  | { kind: 'text'; name: string; pmid: string | null; text: string }
+  | { kind: 'bytes'; name: string; pmid: string | null; bytes: ArrayBuffer };
+
+function buildUserText(row: string[], sources: CitedSource[]): string {
+  const sourceList = sources
+    .map((s) => `- ${s.name} (PMID ${s.pmid ?? '?'})`)
     .join('\n');
-  return `Reaction row:
+  const inlineTexts = sources
+    .filter((s): s is Extract<CitedSource, { kind: 'text' }> => s.kind === 'text')
+    .map(
+      (s) =>
+        `=== PDF: ${s.name} (PMID ${s.pmid ?? '?'}) ===\n${s.text}\n=== END ${s.name} ===`,
+    )
+    .join('\n\n');
+  const pdfBlockCount = sources.filter((s) => s.kind === 'bytes').length;
+  const head = `Reaction row:
 Title: ${row[0] ?? ''}
 Inputs: ${row[2] ?? ''}
 Outputs: ${row[3] ?? ''}
 Catalyst: ${row[4] ?? ''}
 Regulators: ${row[5] ?? ''}
 
-Cited PDFs attached (${pdfHandles.length}):
-${pdfList}
+Cited sources (${sources.length}):
+${sourceList}`;
+  const textBlock = inlineTexts
+    ? `\n\nExtracted PDF text:\n${inlineTexts}`
+    : '';
+  const pdfNote = pdfBlockCount > 0
+    ? `\n\n(${pdfBlockCount} additional PDF${pdfBlockCount === 1 ? ' is' : 's are'} attached as document block${pdfBlockCount === 1 ? '' : 's'} below.)`
+    : '';
+  return `${head}${textBlock}${pdfNote}
 
-Draft a Reactome-style summation per the rules in the system prompt. Output plain prose only — one paragraph, with inline (Author et al. YEAR) citations from the attached PDFs.`;
+Draft a Reactome-style summation per the rules in the system prompt. Output plain prose only — one paragraph, with inline (Author et al. YEAR) citations from the cited sources.`;
 }
 
-async function readPdfBytes(
-  handle: FileSystemFileHandle,
-): Promise<{ name: string; bytes: ArrayBuffer }> {
-  const file = await handle.getFile();
-  return { name: handle.name, bytes: await file.arrayBuffer() };
+async function loadCitedSources(
+  pdfHandles: FileSystemFileHandle[],
+  pdfDir: FileSystemDirectoryHandle | null,
+): Promise<CitedSource[]> {
+  return Promise.all(
+    pdfHandles.map(async (h): Promise<CitedSource> => {
+      const pmid = pmidFromFilename(h.name);
+      const text = pdfDir ? await getOrExtractText(h, pdfDir) : null;
+      if (text !== null) return { kind: 'text', name: h.name, pmid, text };
+      const file = await h.getFile();
+      return { kind: 'bytes', name: h.name, pmid, bytes: await file.arrayBuffer() };
+    }),
+  );
 }
 
 export async function runSummate(input: SummateInput): Promise<SummateReport> {
@@ -135,18 +170,22 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
       );
     }
 
-    let pdfs: { name: string; bytes: ArrayBuffer }[];
+    let sources: CitedSource[];
     try {
-      pdfs = await Promise.all(pdfHandles.map((h) => readPdfBytes(h)));
+      sources = await loadCitedSources(pdfHandles, input.pdfDir);
     } catch (err) {
       log.append('err', `row ${r}: failed to read PDFs: ${(err as Error).message}`);
       errored += 1;
       continue;
     }
+    const textCount = sources.filter((s) => s.kind === 'text').length;
+    const pdfBlocks = sources.filter(
+      (s): s is Extract<CitedSource, { kind: 'bytes' }> => s.kind === 'bytes',
+    );
 
     log.append(
       'info',
-      `row ${r}: calling provider with ${pdfs.length} PDFs…`,
+      `row ${r}: calling provider with ${textCount} extracted text + ${pdfBlocks.length} PDF block(s)…`,
     );
     const llmStart = Date.now();
     let summation: string;
@@ -154,8 +193,8 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
       const result = await input.provider.call(
         {
           systemPrompt: SUMMATE_SYSTEM_PROMPT,
-          userText: buildUserText(row, pdfHandles),
-          pdfs,
+          userText: buildUserText(row, sources),
+          pdfs: pdfBlocks.map((s) => ({ name: s.name, bytes: s.bytes })),
           maxOutputTokens: 16384,
         },
         signal,

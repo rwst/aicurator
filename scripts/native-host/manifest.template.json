@@ -1,0 +1,9 @@
+{
+  "name": "com.reactome.aicurator.pdftotext",
+  "description": "AICurator libpoppler text extraction host",
+  "path": "EXEC_PATH_PLACEHOLDER",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://EXTENSION_ID_PLACEHOLDER/"
+  ]
+}
