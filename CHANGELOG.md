@@ -4,6 +4,85 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2603 — 2026-05-04
+
+Provider expansion (Google + extended thinking everywhere), Canonize colon-awareness, Summate prompt sharpening, shared row-span across process tabs.
+
+### Added
+
+- **Google (Gemini) provider.** New `src/sidepanel/llm/google.ts`
+  hits `https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent`
+  with `x-goog-api-key`. PDFs go in as `inlineData` parts, system
+  prompt as `systemInstruction`. Structured-output schemas pass
+  through `responseSchema` + `responseMimeType: 'application/json'`
+  after a recursive sanitizer strips Gemini-incompatible JSON Schema
+  keywords (`additionalProperties`, `$ref`, `$defs`, `oneOf`, `allOf`,
+  `not`, `patternProperties`, `unevaluatedProperties`) so the existing
+  `EXTRACT_SCHEMA` round-trips unchanged. `'Google'` added to the
+  `Provider` union and `PROVIDERS` array (the Settings dropdown is
+  data-driven, so no UI change). `host_permissions` extended with
+  `https://generativelanguage.googleapis.com/*`.
+- **Extended thinking / reasoning at max on all providers**, model-name
+  gated so older non-reasoning models aren't broken:
+  - Anthropic (`^claude-(opus-4|sonnet-4|haiku-4|3-7-sonnet)`):
+    `thinking: { type: 'enabled', budget_tokens: 24000 }`, `max_tokens`
+    bumped to ≥32000 to fit the budget plus visible-response headroom.
+    Existing response parsing already filters on `type === 'text'` so
+    inline `thinking` blocks are correctly ignored.
+  - OpenAI (`^(o1|o3|o4|gpt-5)`): `reasoning_effort: 'high'`, with
+    `max_tokens` switched to `max_completion_tokens` as required by
+    reasoning models. Non-reasoning models continue to receive
+    `max_tokens` as before.
+  - Google (`^gemini-2\.5`): `generationConfig.thinkingConfig` with
+    `thinkingBudget` set to model max — 32768 for Pro, 24576 for
+    Flash and Flash-Lite — and `includeThoughts: false`.
+  - OpenRouter: always sends `reasoning: { effort: 'high' }` via a
+    new `extraBody` hook on `OpenAILikeOptions`. OpenRouter normalises
+    that across upstream providers and ignores it on non-reasoning
+    models, so no namespace-prefix gating is needed.
+- **Shared row-span state** between Summate and Canonize via a new
+  module-level signal in `src/sidepanel/store/rowSpan.ts`
+  (`rowSpanMode`, `rowSpanText`). Both tabs read/write the same
+  signal so whatever the curator picks in Summate carries over as
+  the pre-set in Canonize (and vice-versa).
+
+### Changed
+
+- **Canonize splits entities on `:`** so individual proteins inside a
+  complex are canonized independently. `ParsedEntity` now exposes
+  `components: { stoich, bareName }[]` instead of a single `bareName`;
+  each component carries its own per-component leading stoichiometry
+  (so `2 ATP:3 Mg [cytosol]` parses into two components `ATP` / `Mg`
+  with their own stoich prefixes). `rewriteCell` looks each component
+  up independently, rejoins with `:`, and falls back to the original
+  raw form when no replacement applied (preserving whitespace). The
+  runner's collection loop adds every component's `bareName` to the
+  UniProt batch. Free-text rewriting in cols A/B was already
+  colon-aware via `\b` word boundaries (colon is a non-word char), so
+  no change there.
+- **Summate prompt sharpened** for citation style: parenthetical-only
+  ("Smith et al. (2024) showed…" prose form banned), explicit
+  placement rule (end of sentence for one citation, immediately after
+  each fact for multi-fact sentences with worked example), and a new
+  Style bullet enforcing HGNC uppercase for human protein symbols
+  (`TP53`, `MYC`, `NFKB1`) with carve-outs for non-human orthologs
+  (mouse `Trp53`, yeast `Cdc6`) and viral proteins (`LANA`, `E1A`).
+  Updated the tense-rule example to demonstrate parenthetical citation.
+
+### Fixed
+
+- **Re-running Summate and Canonize did nothing** when the project
+  was already at stage `summated`/`canonized`. The `onStart` handlers
+  fired a `window.confirm` "re-run will overwrite" dialog gated on
+  stage; in Chrome side panels that dialog renders unreliably (focus
+  / blur quirks), and the user's "no states set by the processes"
+  guidance from v2602 had already retired stage as a Start gate.
+  Stage-based confirm dialogs removed from both `SummateTab.tsx` and
+  `CanonizeTab.tsx` — Start always runs. Extract's pre-flight modal
+  (which guards a much wider blast radius — full-sheet overwrite)
+  is unchanged.
+
+
 ## v2602 — 2026-05-03
 
 Post-v2601 follow-ups: Summate PDF→text preprocessing, redesigned tab gating, span-input ergonomics, wider source-column read.

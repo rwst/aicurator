@@ -35,7 +35,7 @@ if (OAUTH_CLIENT_ID === '__REPLACED_AT_BUILD__') {
 export default defineManifest({
   manifest_version: 3,
   name: 'AICurator',
-  version: '26.2.0',
+  version: '26.3.0',
   description: 'Reactome curation workflow side panel',
 
   // Pinned extension ID. Public key derived from aicurator.pem (private key
