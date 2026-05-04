@@ -1,15 +1,24 @@
 // UniProt SPARQL client.
 //
-// Strategy: instead of one big VALUES + 6-UNION query (which times out
-// at the UniProt server), we issue 5 simple per-match-path queries in
-// parallel. Each query is a flat BGP with no UNION, so the planner can
-// use indexes directly.
+// Strategy: two simple per-match-path queries in parallel — one against
+// gene preferred symbols, one against gene synonyms. We deliberately do
+// NOT match against protein-level names (recommendedName, alternativeName,
+// mnemonic), because those produce cross-gene collisions: e.g. searching
+// for "Timeless" against alternativeName matches both the TIMELESS gene
+// and the TIPIN gene (whose protein is "Timeless-interacting protein"),
+// flagging the entry as ambiguous when the curator's intent was clearly
+// the human TIMELESS gene.
+//
+// UniProt's gene labels for human are uppercase; we uppercase the inputs
+// before SPARQL so curator-typed mixed-case names ("Tipin", "Timeless")
+// still match the canonical labels. The replacement map is keyed by the
+// curator's original-case spelling so Canonize rewrites the cell as
+// written.
 //
 // Two-pass to keep response volume manageable:
-//   1. Reviewed-only across all paths. Most well-characterized human
+//   1. Reviewed-only across both paths. Most well-characterized human
 //      proteins resolve here with a tiny payload (typically 1–3 bindings).
-//   2. Only labels that hit zero reviewed entries fall back to TrEMBL
-//      across all paths.
+//   2. Only labels that hit zero reviewed entries fall back to TrEMBL.
 //
 // Disambiguation per the plan:
 //   - human-mandatory (taxon:9606 in every BGP)
@@ -32,15 +41,6 @@ interface SparqlResponse {
 }
 
 const MATCH_PATHS: readonly { name: string; triple: string }[] = [
-  { name: 'mnemonic', triple: '?protein up:mnemonic ?label .' },
-  {
-    name: 'recName',
-    triple: '?protein up:recommendedName/up:fullName ?label .',
-  },
-  {
-    name: 'altName',
-    triple: '?protein up:alternativeName/up:fullName ?label .',
-  },
   { name: 'genePrefLabel', triple: '?geneEntity skos:prefLabel ?label .' },
   { name: 'geneAltLabel', triple: '?geneEntity skos:altLabel ?label .' },
 ] as const;
@@ -148,9 +148,12 @@ export interface ResolveResult {
 }
 
 // REST fallback for labels that SPARQL misses. UniProt's REST search
-// supports `gene:` (primary + synonyms), `mnemonic:`, and `protein_name:`
-// qualifiers and is case-insensitive, so it catches withdrawn symbols
-// and alternate spellings that exact-match SPARQL skips.
+// `gene:` qualifier matches primary symbol + synonyms case-insensitively,
+// so it catches withdrawn symbols and alternate spellings that
+// exact-match SPARQL skips. We deliberately don't use `protein_name:`
+// here for the same reason we dropped recName/altName from SPARQL —
+// "Timeless" matches the protein name of TIPIN, which would re-introduce
+// cross-gene ambiguity.
 interface UniprotRestEntry {
   entryType: string; // "UniProtKB reviewed (Swiss-Prot)" or "UniProtKB unreviewed (TrEMBL)"
   genes?: { geneName?: { value: string } }[];
@@ -168,9 +171,8 @@ async function restSearch(
   try {
     const reviewedClause = reviewedOnly ? '+AND+reviewed:true' : '';
     const safe = encodeURIComponent(label).replace(/%20/g, '+');
-    // `gene:` matches recommended + synonyms; `protein_name:` matches
-    // full + alternative names. Both case-insensitive.
-    const query = `(gene:${safe}+OR+protein_name:${safe})+AND+organism_id:9606${reviewedClause}`;
+    // `gene:` matches preferred symbol + synonyms, case-insensitive.
+    const query = `gene:${safe}+AND+organism_id:9606${reviewedClause}`;
     const url =
       `${REST_SEARCH_ENDPOINT}?query=${query}` +
       `&format=json&fields=gene_names,reviewed&size=10`;
@@ -220,11 +222,16 @@ export async function resolveEntities(
   const ambiguous: string[] = [];
   if (labels.length === 0) return { replacements, noMatch, ambiguous };
 
-  // Pass 1: SPARQL reviewed-only across all match paths.
-  const reviewed = await queryAllPaths(labels, true);
+  // De-duplicated uppercase forms — what we actually send to UniProt.
+  // The result maps below are keyed by uppercase; we look back up by
+  // `label.toUpperCase()` when iterating curator-spelling labels.
+  const upperLabels = [...new Set(labels.map((l) => l.toUpperCase()))];
+
+  // Pass 1: SPARQL reviewed-only.
+  const reviewed = await queryAllPaths(upperLabels, true);
 
   // Pass 2: SPARQL TrEMBL fallback for labels with no reviewed match.
-  const unresolvedAfterReviewed = labels.filter((l) => !reviewed.has(l));
+  const unresolvedAfterReviewed = upperLabels.filter((l) => !reviewed.has(l));
   let unreviewed = new Map<string, BindingHit[]>();
   if (unresolvedAfterReviewed.length > 0) {
     unreviewed = await queryAllPaths(unresolvedAfterReviewed, false);
@@ -232,8 +239,9 @@ export async function resolveEntities(
 
   // Pass 3: REST search for whatever SPARQL didn't catch — handles
   // withdrawn / synonym gene symbols (e.g. "DIESL") that the
-  // strict-equality SPARQL paths miss.
-  const stillUnresolved = labels.filter(
+  // strict-equality SPARQL paths miss. REST is case-insensitive on
+  // its own; we still pass uppercase for consistency with the keys.
+  const stillUnresolved = upperLabels.filter(
     (l) => !reviewed.has(l) && !unreviewed.has(l),
   );
   let restReviewed = new Map<string, BindingHit[]>();
@@ -250,11 +258,12 @@ export async function resolveEntities(
 
   // Resolve per label, preferring earlier passes (most authoritative).
   for (const label of labels) {
+    const key = label.toUpperCase();
     const hits =
-      reviewed.get(label) ??
-      unreviewed.get(label) ??
-      restReviewed.get(label) ??
-      restUnreviewed.get(label);
+      reviewed.get(key) ??
+      unreviewed.get(key) ??
+      restReviewed.get(key) ??
+      restUnreviewed.get(key);
     if (!hits || hits.length === 0) {
       noMatch.push(label);
       continue;
@@ -265,7 +274,11 @@ export async function resolveEntities(
     const distinctGenes = new Set(pool.map((h) => h.gene));
     if (distinctGenes.size === 1) {
       const [g] = distinctGenes;
-      if (g && g !== label.toUpperCase()) {
+      // Exact-string compare (not case-folded) so case-only differences
+      // like "Tipin" → "TIPIN" produce a real replacement; this is the
+      // whole point of Canonize for the all-caps human-protein
+      // convention. True no-ops ("TP53" → "TP53") still drop out.
+      if (g && g !== label) {
         replacements.set(label, g);
       }
     } else {
