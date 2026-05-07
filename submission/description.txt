@@ -1,0 +1,1 @@
+This extension helps our team curate AI-generated content for internal workflows.
