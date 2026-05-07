@@ -32,15 +32,23 @@ if (OAUTH_CLIENT_ID === '__REPLACED_AT_BUILD__') {
   );
 }
 
+// Pinned extension ID for local dev. Public key derived from aicurator.pem
+// (private key is gitignored). Extension ID: ficloojffnfibdhflbinbnonaemknfai.
+// Omitted from Chrome Web Store builds — the store rejects manifests that
+// carry a `key` field (it assigns the ID itself). Set AICURATOR_CWS=1 to
+// strip it for submission.
+const PINNED_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0uQm/sZ4Ttw8a3Nc8WxdL6an8oomfvyYpeizazfAhNB31xaTdjJiJSlZdcMhXaNnFedptQqVB+YLauOjReRQ650svVT1Ow5FC2G5J0tpyKAdCYb5q3CQE7Bkbz3VEP/2LGMdomtvj0xPdstv49u1ofk2+GPlg/KWOn+H+7Klp6dnZldrpol0kJDOYGjf4R+oVdsbEV/3qgjGqd2e/xqHDBQUsa6YOOLzdXVqqFOYQVSd3ArWdekHruGz4Z2E2BTovXsoXeoKvB0EKfT1upTv0ixaAWH+ltkWaKJB0vsrDoxRlMjlrw0vbu3XAml1KZrim0mZDV9S45KX29nV98sbWQIDAQAB';
+
+const isCwsBuild = process.env.AICURATOR_CWS === '1';
+
 export default defineManifest({
   manifest_version: 3,
   name: 'AICurator',
   version: '26.3.0',
   description: 'Reactome curation workflow side panel',
 
-  // Pinned extension ID. Public key derived from aicurator.pem (private key
-  // is gitignored). Extension ID: ficloojffnfibdhflbinbnonaemknfai.
-  key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0uQm/sZ4Ttw8a3Nc8WxdL6an8oomfvyYpeizazfAhNB31xaTdjJiJSlZdcMhXaNnFedptQqVB+YLauOjReRQ650svVT1Ow5FC2G5J0tpyKAdCYb5q3CQE7Bkbz3VEP/2LGMdomtvj0xPdstv49u1ofk2+GPlg/KWOn+H+7Klp6dnZldrpol0kJDOYGjf4R+oVdsbEV/3qgjGqd2e/xqHDBQUsa6YOOLzdXVqqFOYQVSd3ArWdekHruGz4Z2E2BTovXsoXeoKvB0EKfT1upTv0ixaAWH+ltkWaKJB0vsrDoxRlMjlrw0vbu3XAml1KZrim0mZDV9S45KX29nV98sbWQIDAQAB',
+  ...(isCwsBuild ? {} : { key: PINNED_KEY }),
 
   permissions: [
     'sidePanel',

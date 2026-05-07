@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "package": "npm run build && cd dist && zip -r ../aicurator-$(node -p \"require('./manifest.json').version\").zip .",
+    "package": "AICURATOR_CWS=1 npm run build && cd dist && zip -r ../aicurator-$(node -p \"require('./manifest.json').version\").zip .",
     "preview": "vite preview"
   },
   "dependencies": {
