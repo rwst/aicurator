@@ -298,12 +298,21 @@ export async function setSelectedProject(name: string | null): Promise<void> {
 }
 
 export async function grantProjectsDir(): Promise<void> {
-  // Pre-create <Downloads>/aicurator/ so the user has a visible target.
-  // Best-effort: failure here doesn't block the picker.
+  // Pre-create <Downloads>/aicurator/ so the user has a visible target in
+  // the picker. If this fails (download policy, custom Downloads location,
+  // managed Chrome, etc.), the user would otherwise navigate to Downloads,
+  // see no aicurator/ folder, and cancel the picker in confusion. Surface
+  // the failure with an actionable message so they can create it manually.
   try {
     await bootstrapAicuratorDir();
   } catch (err) {
-    console.warn('[aicurator] bootstrap warning:', err);
+    console.warn('[aicurator] bootstrap failed:', err);
+    throw new Error(
+      'Could not auto-create <Downloads>/aicurator/. Please create that ' +
+        'folder manually in your Downloads directory, then click ' +
+        '"Grant access" again. ' +
+        `(Cause: ${(err as Error).message})`,
+    );
   }
   const handle = await pickDirectory();
   // Validate folder name BEFORE escalating to readwrite. If the user

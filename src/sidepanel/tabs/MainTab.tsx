@@ -32,11 +32,17 @@ export default function MainTab() {
   const hasProject = () => project.selectedName !== null;
   const canCreate = () => granted() && newName().trim().length > 0;
 
+  // The folder picker throws AbortError when the user dismisses the dialog
+  // (Cancel / Esc / close). That's not a failure — don't surface it.
+  const isAbort = (err: unknown) =>
+    err instanceof DOMException && err.name === 'AbortError';
+
   const onGrant = async () => {
     setError(null);
     try {
       await grantProjectsDir();
     } catch (err) {
+      if (isAbort(err)) return;
       setError(`Could not grant access: ${(err as Error).message}`);
     }
   };
@@ -46,6 +52,7 @@ export default function MainTab() {
     try {
       await reGrantProjectsDir();
     } catch (err) {
+      if (isAbort(err)) return;
       setError(`Could not re-grant access: ${(err as Error).message}`);
     }
   };
