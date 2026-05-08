@@ -1,5 +1,8 @@
 # AICurator
 
+This is a Reactome-internal extension that team members can install via
+a non-public Chrome Web Store address (ask Ralf if you don't have it).
+
 A Chrome MV3 side-panel extension that drives a four-stage Reactome
 curation workflow against a Google Sheet:
 
@@ -15,21 +18,9 @@ curation workflow against a Google Sheet:
 4. **Canonize** — replace protein/gene mentions in columns A–F with their
    canonical UniProt-confirmed (human-only, reviewed-first) gene symbols.
 
-Stack: Vite + SolidJS + TypeScript + `@crxjs/vite-plugin`. Targets
-**dev-mode only** (no Chrome Web Store deployment).
+Stack: Vite + SolidJS + TypeScript + `@crxjs/vite-plugin`.
 
-Internal version: `v2601` (year 26, sequence 01). Browser-facing
-manifest version: `26.1.0`.
-
-
-## Status
-
-Phases 0 through 10 of `plan.md` are complete. The four tabs are wired
-end-to-end; pmid-tagger is integrated; LLM providers (Anthropic, OpenAI,
-OpenRouter) and Google Sheets OAuth are functional. Outstanding items
-are tracked in `TODO.md`. Known Chrome quirks and their mitigations are
-in `chrome-issues.md`.
-
+The following is for people outside the team.
 
 ## Requirements
 
