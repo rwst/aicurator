@@ -4,6 +4,41 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2604 — 2026-05-08
+
+Chrome Web Store submission prep and folder-grant UX fixes.
+
+### Added
+
+- **`npm run package`** — builds with `AICURATOR_CWS=1` and zips `dist/`
+  into `aicurator-<manifest-version>.zip` at the repo root, ready for
+  Chrome Web Store upload. The version is read from `dist/manifest.json`
+  rather than `package.json`, so the zip name always matches the
+  shipped manifest.
+- **`AICURATOR_CWS=1` build flag** — strips the pinned `key` field
+  from `dist/manifest.json`. CWS rejects manifests carrying a `key`
+  (it assigns the extension ID itself). Local `npm run build` keeps
+  the key so the dev extension ID stays pinned at
+  `ficloojffnfibdhflbinbnonaemknfai`.
+- **`PRIVACY.md`** — privacy policy covering local-only storage,
+  third-party API endpoints contacted, the optional native PDF host,
+  and per-permission rationale, sized for the CWS submission form.
+
+### Fixed
+
+- **AbortError no longer surfaces as an error** in MainTab. Cancelling
+  the directory picker (Esc / Cancel / X) used to render a red
+  "Could not grant access: The user aborted a request" banner. Now
+  detected via `err.name === 'AbortError'` in `onGrant` / `onReGrant`
+  and silently swallowed.
+- **Bootstrap failures are now surfaced** to the user. Previously,
+  `bootstrapAicuratorDir` failures (download policy blocks, custom
+  Downloads location, managed Chrome) were logged to the console and
+  the picker still opened — leaving the user staring at a Downloads
+  view with no `aicurator/` folder to pick. `grantProjectsDir` now
+  rethrows with an actionable message: "create that folder manually
+  in your Downloads directory, then click Grant access again."
+
 ## v2603 — 2026-05-04
 
 Provider expansion (Google + extended thinking everywhere), Canonize colon-awareness, Summate prompt sharpening, shared row-span across process tabs.

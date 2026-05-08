@@ -12,7 +12,7 @@ There are no tests, lint, or format scripts configured.
 
 ## Repository state
 
-The product is implemented (current internal version `v2603`, manifest `26.3.0`). Feature ledger lives in `CHANGELOG.md`; backlog in `TODO.md`; documented Chrome quirks in `chrome-issues.md`. Locked design plan in `plan.md`.
+The product is implemented (current internal version `v2604`, manifest `26.4.0`). Feature ledger lives in `CHANGELOG.md`; backlog in `TODO.md`; documented Chrome quirks in `chrome-issues.md`. Locked design plan in `plan.md`.
 
 `design_handoff_aicurator_sidepanel/README.md` is the source of truth for **visual design** (design tokens, typography, hi-fi prototype HTML). Treat the prototype HTML/JSX as reference only; the implementation is in `src/sidepanel/` and is the source of truth for behavior.
 

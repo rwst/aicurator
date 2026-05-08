@@ -45,7 +45,7 @@ const isCwsBuild = process.env.AICURATOR_CWS === '1';
 export default defineManifest({
   manifest_version: 3,
   name: 'AICurator',
-  version: '26.3.0',
+  version: '26.4.0',
   description: 'Reactome curation workflow side panel',
 
   ...(isCwsBuild ? {} : { key: PINNED_KEY }),
