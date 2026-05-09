@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "build:cws": "tsc -b && AICURATOR_CWS=1 vite build --outDir dist-cws --emptyOutDir",
     "package": "rm -rf dist-cws && npm run build:cws && cd dist-cws && zip -r ../aicurator-$(node -p \"require('./manifest.json').version\").zip .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "idb-keyval": "^6.2.2",
@@ -20,6 +21,7 @@
     "@types/node": "^24.12.2",
     "typescript": "~6.0.2",
     "vite": "^8.0.10",
-    "vite-plugin-solid": "^2.11.12"
+    "vite-plugin-solid": "^2.11.12",
+    "vitest": "^4.1.5"
   }
 }
