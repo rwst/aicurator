@@ -22,13 +22,24 @@ function readDotEnv(name: string): string | undefined {
   return undefined;
 }
 
-const OAUTH_CLIENT_ID =
-  readDotEnv('AICURATOR_OAUTH_CLIENT_ID') ?? '__REPLACED_AT_BUILD__';
+// A Chrome-Extension OAuth client in GCP is bound to one extension ID. Dev
+// (with `key`) and CWS-installed (without `key`) builds have different IDs,
+// so they need different OAuth clients:
+//   - AICURATOR_OAUTH_CLIENT_ID      → registered to dev ID ficloojf…
+//   - AICURATOR_OAUTH_CLIENT_ID_CWS  → registered to the CWS-assigned ID
+// Whichever variant the build needs is picked based on AICURATOR_CWS.
+const isCwsBuild = process.env.AICURATOR_CWS === '1';
+
+const OAUTH_ENV_VAR = isCwsBuild
+  ? 'AICURATOR_OAUTH_CLIENT_ID_CWS'
+  : 'AICURATOR_OAUTH_CLIENT_ID';
+
+const OAUTH_CLIENT_ID = readDotEnv(OAUTH_ENV_VAR) ?? '__REPLACED_AT_BUILD__';
 
 if (OAUTH_CLIENT_ID === '__REPLACED_AT_BUILD__') {
   console.warn(
-    '[manifest.config.ts] AICURATOR_OAUTH_CLIENT_ID is not set — Sheets ' +
-      'OAuth will fail at runtime. Add it to .env or export in shell.',
+    `[manifest.config.ts] ${OAUTH_ENV_VAR} is not set — Sheets OAuth will ` +
+      'fail at runtime. Add it to .env or export in shell.',
   );
 }
 
@@ -39,8 +50,6 @@ if (OAUTH_CLIENT_ID === '__REPLACED_AT_BUILD__') {
 // strip it for submission.
 const PINNED_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0uQm/sZ4Ttw8a3Nc8WxdL6an8oomfvyYpeizazfAhNB31xaTdjJiJSlZdcMhXaNnFedptQqVB+YLauOjReRQ650svVT1Ow5FC2G5J0tpyKAdCYb5q3CQE7Bkbz3VEP/2LGMdomtvj0xPdstv49u1ofk2+GPlg/KWOn+H+7Klp6dnZldrpol0kJDOYGjf4R+oVdsbEV/3qgjGqd2e/xqHDBQUsa6YOOLzdXVqqFOYQVSd3ArWdekHruGz4Z2E2BTovXsoXeoKvB0EKfT1upTv0ixaAWH+ltkWaKJB0vsrDoxRlMjlrw0vbu3XAml1KZrim0mZDV9S45KX29nV98sbWQIDAQAB';
-
-const isCwsBuild = process.env.AICURATOR_CWS === '1';
 
 export default defineManifest({
   manifest_version: 3,

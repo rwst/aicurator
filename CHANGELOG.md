@@ -10,16 +10,21 @@ Chrome Web Store submission prep and folder-grant UX fixes.
 
 ### Added
 
-- **`npm run package`** — builds with `AICURATOR_CWS=1` and zips `dist/`
-  into `aicurator-<manifest-version>.zip` at the repo root, ready for
-  Chrome Web Store upload. The version is read from `dist/manifest.json`
-  rather than `package.json`, so the zip name always matches the
-  shipped manifest.
+- **`npm run package`** — runs `npm run build:cws` (sets
+  `AICURATOR_CWS=1` and writes to a separate `dist-cws/` via vite's
+  `--outDir`), then zips that directory into
+  `aicurator-<manifest-version>.zip` at the repo root. The version
+  is read from the built manifest, not `package.json`, so the zip
+  name always matches the shipped manifest. **`dist/` is left
+  untouched**, so the unpacked dev extension stays loadable while
+  you produce a CWS build.
 - **`AICURATOR_CWS=1` build flag** — strips the pinned `key` field
-  from `dist/manifest.json`. CWS rejects manifests carrying a `key`
-  (it assigns the extension ID itself). Local `npm run build` keeps
-  the key so the dev extension ID stays pinned at
-  `ficloojffnfibdhflbinbnonaemknfai`.
+  from the built manifest and selects `AICURATOR_OAUTH_CLIENT_ID_CWS`
+  instead of the dev OAuth client. CWS rejects manifests carrying a
+  `key` (it assigns the extension ID itself). Local `npm run build`
+  keeps the key so the dev extension ID stays pinned at
+  `ficloojffnfibdhflbinbnonaemknfai` and uses
+  `AICURATOR_OAUTH_CLIENT_ID`.
 - **`PRIVACY.md`** — privacy policy covering local-only storage,
   third-party API endpoints contacted, the optional native PDF host,
   and per-permission rationale, sized for the CWS submission form.
