@@ -15,6 +15,13 @@ import {
 import { getActiveTabSheetUrl } from '../services/projectsDir';
 import { testConnection, type TestResult } from '../services/testConnection';
 
+// Derive the internal vYYXX label from the manifest's <YY>.<XX>.<patch>
+// so the badge can never drift from the actual shipped version.
+function internalVersion(): string {
+  const [yy, xx] = chrome.runtime.getManifest().version.split('.');
+  return `v${yy}${(xx ?? '0').padStart(2, '0')}`;
+}
+
 export default function MainTab() {
   const [newName, setNewName] = createSignal('');
   const [error, setError] = createSignal<string | null>(null);
@@ -103,7 +110,7 @@ export default function MainTab() {
         />
         <div class="meta">
           <span class="app">AICurator</span>
-          <span class="ver">v2601</span>
+          <span class="ver">{internalVersion()}</span>
         </div>
       </header>
 
