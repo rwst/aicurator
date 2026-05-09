@@ -5,8 +5,6 @@
 import type { Log } from '../services/log';
 import type { Provider } from '../llm/provider';
 import { EXTRACT_SYSTEM_PROMPT } from '../prompts/extract.system';
-import { resolveByDoi, resolveByTitleAuthor } from '../services/ncbi';
-import { mapWithLimit } from '../lib/concurrent';
 import {
   batchUpdateValues,
   getSheetName,
@@ -14,6 +12,15 @@ import {
   quoteSheet,
 } from '../services/sheets';
 import { HEADER_ROW } from '../services/sheetRows';
+import {
+  createRefResolver,
+  createTokenBucketLimiter,
+  type RawRef,
+  type ResolutionSummary,
+} from '../services/refResolver';
+import { createHttpNcbiAdapter } from '../services/refResolver/adapters/ncbiHttp';
+import { createRealClock } from '../services/refResolver/adapters/clockReal';
+import { mapResolverEventToLog } from './refResolverLog';
 
 export interface ExtractInput {
   pathwayName: string;
@@ -186,27 +193,6 @@ async function copyPdfsIntoProject(
   }
 }
 
-// JS-enforced no-fabrication: an LLM-claimed inline PMID must literally
-// appear in the joined PDF text. We do not have PDF text-extraction
-// here in v2601; this pass therefore strips ALL pmid_source="inline"
-// PMIDs that we cannot prove. Result: the resolver re-discovers them
-// via DOI ESearch, which is the safe path. If/when we add PDF text
-// extraction (e.g. via pdfjs-dist), we can reinstate verbatim
-// confirmation.
-function stripUnverifiedInlinePmids(reactions: RawReaction[]): number {
-  let stripped = 0;
-  for (const r of reactions) {
-    for (const ref of r.references) {
-      if (ref.pmid_source === 'inline' && ref.pmid) {
-        ref.pmid = '';
-        ref.pmid_source = '';
-        stripped += 1;
-      }
-    }
-  }
-  return stripped;
-}
-
 function ladderUrl(ref: ResolvedRef): string {
   if (ref.effectivePmid)
     return `https://pubmed.ncbi.nlm.nih.gov/${ref.effectivePmid}/`;
@@ -338,78 +324,37 @@ async function processExtractedOutput(
 ): Promise<ExtractReport> {
   const { log, signal } = ctx;
 
-
-  const stripped = stripUnverifiedInlinePmids(output.reactions);
-  if (stripped > 0) {
-    log.append(
-      'warn',
-      `stripped ${stripped} unverified inline PMIDs (no PDF text-extraction yet — re-resolve via DOI ESearch)`,
-    );
-  }
-
-
-  const allRefs: { reactionIdx: number; refIdx: number; ref: RawReference }[] = [];
-  output.reactions.forEach((r, ri) => {
-    r.references.forEach((ref, refIdx) => {
-      allRefs.push({ reactionIdx: ri, refIdx, ref });
-    });
-  });
-
-  const doiInputs = allRefs
-    .filter((x) => x.ref.doi)
-    .map((x) => ({
-      marker: `${x.reactionIdx}:${x.refIdx}`,
-      doi: x.ref.doi,
-    }));
-  log.append('info', `resolving ${doiInputs.length} DOIs via NCBI E-utilities…`);
-  let doiHits = 0;
-  if (doiInputs.length > 0) {
-    try {
-      const resolutions = await resolveByDoi(doiInputs);
-      for (const x of allRefs) {
-        const res = resolutions.get(`${x.reactionIdx}:${x.refIdx}`);
-        if (res?.pmid) {
-          x.ref.pmid = res.pmid;
-          x.ref.pmid_source = 'esearch:doi';
-          if (res.pmcid && !x.ref.pmcid) x.ref.pmcid = res.pmcid;
-          doiHits += 1;
-        }
-      }
-      log.append('ok', `DOI batch resolved ${doiHits}/${doiInputs.length}`);
-    } catch (err) {
-      log.append('warn', `DOI batch failed: ${(err as Error).message}`);
-    }
-  }
-
-  // 6b. Title+author fallback for refs with neither inline nor DOI hit.
-  // NCBI's unauthenticated rate limit is 3 req/sec; cap concurrency at 3.
-  const taCandidates = allRefs.filter(
-    (x) => !x.ref.pmid && x.ref.title && x.ref.firstAuthor,
+  // ── PMID resolution: inline-strip + DOI batch + title+author fallback,
+  // shared rate-limit budget, single error path. The resolver throws
+  // only on abort; everything else lands in `summary.transientErrors`.
+  const rawRefs: RawRef[] = output.reactions.flatMap((r, ri) =>
+    r.references.map((ref, refIdx) => ({
+      id: `${ri}:${refIdx}`,
+      doi: ref.doi || undefined,
+      pmcid: ref.pmcid || undefined,
+      title: ref.title || undefined,
+      firstAuthor: ref.firstAuthor || undefined,
+      year: ref.year || undefined,
+      pmid_source:
+        ref.pmid_source === 'inline' ? ('inline' as const) : undefined,
+      pmid: ref.pmid || undefined,
+    })),
   );
-  let taHits = 0;
-  if (taCandidates.length > 0) {
-    signal.throwIfAborted();
-    await mapWithLimit(taCandidates, 3, async (x) => {
-      try {
-        const res = await resolveByTitleAuthor({
-          title: x.ref.title,
-          firstAuthor: x.ref.firstAuthor,
-          year: x.ref.year || undefined,
-        });
-        if (res.pmid) {
-          x.ref.pmid = res.pmid;
-          x.ref.pmid_source = 'esearch:title-author';
-          taHits += 1;
-        }
-      } catch {
-        /* skip on per-ref error */
-      }
-    });
-    log.append(
-      'info',
-      `title+author fallback: ${taHits}/${taCandidates.length} resolved`,
-    );
-  }
+
+  const resolveSummary = await runResolver(rawRefs, log, signal);
+
+  // Apply resolutions back onto the original (mutable) references so
+  // the rest of this runner — source-ladder walk, sheet rows, audit
+  // summary — keeps working off the existing shape.
+  output.reactions.forEach((r, ri) =>
+    r.references.forEach((ref, refIdx) => {
+      const hit = resolveSummary.byId.get(`${ri}:${refIdx}`);
+      if (!hit) return;
+      ref.pmid = hit.pmid;
+      ref.pmid_source = hit.pmid_source as RawReference['pmid_source'];
+      if (hit.pmcid && !ref.pmcid) ref.pmcid = hit.pmcid;
+    }),
+  );
 
 
   const ladderBreakdown = { pubmed: 0, pmc: 0, doi: 0, publisher: 0, blank: 0 };
@@ -492,13 +437,15 @@ async function processExtractedOutput(
     return pairs;
   })();
 
-  // Inline-source count is 0 for v2601 because the no-fabrication
-  // stripper removed them; we still report 0 explicitly so the curator
-  // can see the audit trail.
+  // Inline-source count is 0 today because the inline verifier
+  // unconditionally strips (no PDF text-extraction yet). The resolver's
+  // summary is the single source of truth — per-ref pmid_source labels
+  // and these aggregates are computed from the same data so they
+  // cannot drift.
   const pmidSourceBreakdown = {
-    inline: 0,
-    doi: doiHits,
-    titleAuthor: taHits,
+    inline: resolveSummary.summary.bySource['inline'],
+    doi: resolveSummary.summary.bySource['esearch:doi'],
+    titleAuthor: resolveSummary.summary.bySource['esearch:title-author'],
   };
 
   // Unique-ref count: dedupe by best identifier per ref.
@@ -543,6 +490,46 @@ async function processExtractedOutput(
   }
 
   return report;
+}
+
+interface ResolverRunSummary {
+  summary: ResolutionSummary;
+  byId: Map<string, { pmid: string; pmcid: string; pmid_source: string }>;
+}
+
+async function runResolver(
+  rawRefs: RawRef[],
+  log: Log,
+  signal: AbortSignal,
+): Promise<ResolverRunSummary> {
+  const clock = createRealClock();
+  const limiter = createTokenBucketLimiter({ ratePerSec: 3, clock });
+  const ncbi = createHttpNcbiAdapter({
+    fetch: globalThis.fetch.bind(globalThis),
+    limiter,
+  });
+  const resolver = createRefResolver({
+    ncbi,
+    clock,
+    onEvent: (e) => mapResolverEventToLog(log, e),
+  });
+  const result = await resolver.resolve(rawRefs, signal);
+  if (result.summary.strippedInline > 0) {
+    log.append(
+      'warn',
+      `stripped ${result.summary.strippedInline} unverified inline PMID(s) (no PDF text-extraction yet)`,
+    );
+  }
+  const byId = new Map(
+    result.refs.map(
+      (r) =>
+        [
+          r.id,
+          { pmid: r.pmid, pmcid: r.pmcid, pmid_source: r.pmid_source },
+        ] as const,
+    ),
+  );
+  return { summary: result.summary, byId };
 }
 
 // ── Mock LLM output for sheet-write testing ──────────────
