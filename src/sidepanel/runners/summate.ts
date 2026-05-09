@@ -190,7 +190,7 @@ export async function runSummate(input: SummateInput): Promise<SummateReport> {
     const llmStart = Date.now();
     let summation: string;
     try {
-      const result = await input.provider.call(
+      const result = await input.provider.generateText(
         {
           systemPrompt: SUMMATE_SYSTEM_PROMPT,
           userText: buildUserText(row, sources),

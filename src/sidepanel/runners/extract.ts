@@ -5,7 +5,6 @@
 import type { Log } from '../services/log';
 import type { Provider } from '../llm/provider';
 import { EXTRACT_SYSTEM_PROMPT } from '../prompts/extract.system';
-import { validate } from '../services/jsonSchema';
 import { resolveByDoi, resolveByTitleAuthor } from '../services/ncbi';
 import { mapWithLimit } from '../lib/concurrent';
 import {
@@ -187,19 +186,6 @@ async function copyPdfsIntoProject(
   }
 }
 
-function extractJsonObject(raw: string): unknown {
-  // Be lenient: accept fenced ```json blocks, leading/trailing prose.
-  let s = raw.trim();
-  const fence = /```(?:json)?\s*([\s\S]*?)\s*```/.exec(s);
-  if (fence) s = fence[1].trim();
-  const firstBrace = s.indexOf('{');
-  const lastBrace = s.lastIndexOf('}');
-  if (firstBrace < 0 || lastBrace < 0) {
-    throw new Error('LLM response did not contain a JSON object');
-  }
-  return JSON.parse(s.slice(firstBrace, lastBrace + 1));
-}
-
 // JS-enforced no-fabrication: an LLM-claimed inline PMID must literally
 // appear in the joined PDF text. We do not have PDF text-extraction
 // here in v2601; this pass therefore strips ALL pmid_source="inline"
@@ -299,7 +285,7 @@ export async function runExtract(input: ExtractInput): Promise<ExtractReport> {
 
 Extract the reaction graph from the attached PDFs. Output the JSON object per the schema in the system prompt.`;
   const llmStart = Date.now();
-  const result = await input.provider.call(
+  const result = await input.provider.generateJson<RawExtractOutput>(
     {
       systemPrompt: EXTRACT_SYSTEM_PROMPT,
       userText,
@@ -317,35 +303,17 @@ Extract the reaction graph from the attached PDFs. Output the JSON object per th
 
   // Always dump the raw response into the project dir so the curator can
   // inspect it on parse failure without re-running the (expensive) LLM call.
-  await writeDebugFile(input.projectDir, 'extract-response.txt', result.text);
+  await writeDebugFile(input.projectDir, 'extract-response.txt', result.raw);
 
+  if (result.kind === 'best-effort' && result.degraded.lossy) {
+    const dropped = result.degraded.stripped.map((s) => s.key).join(', ');
+    log.append(
+      'warn',
+      `provider stripped schema features (${dropped}) — relying on post-parse validation`,
+    );
+  }
 
-  let parsed: unknown;
-  try {
-    parsed = extractJsonObject(result.text);
-  } catch (err) {
-    log.append('err', `JSON parse failed: ${(err as Error).message}`);
-    log.append(
-      'info',
-      `response head (200ch): ${result.text.slice(0, 200)}`,
-    );
-    log.append(
-      'info',
-      `response tail (200ch): ${result.text.slice(-200)}`,
-    );
-    log.append(
-      'info',
-      `full response saved to <project>/extract-response.txt (${result.text.length} chars)`,
-    );
-    throw err;
-  }
-  try {
-    validate(parsed, EXTRACT_SCHEMA);
-  } catch (err) {
-    log.append('err', `schema validation failed: ${(err as Error).message}`);
-    throw err;
-  }
-  const output = parsed as RawExtractOutput;
+  const output = result.data;
 
   return await processExtractedOutput(output, {
     spreadsheetId: input.spreadsheetId,

@@ -29,11 +29,10 @@ export async function testConnection(): Promise<TestResult> {
       apiKey: settings.apiKey,
       modelName: settings.modelName,
     });
-    const result = await provider.call(
+    const result = await provider.generateText(
       {
         systemPrompt: 'You are a connectivity probe. Reply with just "ok".',
         userText: 'ping',
-        pdfs: [],
         maxOutputTokens: 16,
       },
       ctrl.signal,
