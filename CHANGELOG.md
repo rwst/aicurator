@@ -4,6 +4,145 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2606 — 2026-05-09
+
+Three deepening refactors landed back-to-back: LLM provider, reference
+resolver, entity canonizer. Same architectural shape across all three —
+ports & adapters, port-isolated state machines, discriminated state
+unions, single error path (throw only on abort), event streams for
+progress, comprehensive Vitest charters using virtual clocks for
+time-sensitive invariants. **48 boundary tests across the three
+modules** (21 + 12 + 15); `tsc -b`, `vite build`, `npm run test` all
+green.
+
+### Added
+
+- **Deepened LLM provider module** at `src/sidepanel/llm/`. Public
+  surface split into `generateText(req)` and `generateJson<T>(req)`,
+  with a discriminated `JsonResult<T> = {kind:'strict', data, raw,
+  usage} | {kind:'best-effort', data, raw, usage, degraded}`. A caller
+  cannot reach `result.data` without first switching on `kind`; the
+  silent-schema-degradation case is a compile-time impossibility.
+  Composed from pure-value strategies — `SchemaDialect`
+  (`PassThrough` for Anthropic, `OpenAIStrict` for OpenAI/OpenRouter,
+  `GeminiSanitizing` with JSON-pointer `SanitizationReport`),
+  `ThinkingPolicy` (per-provider model-name regex tables), and
+  `MessageFormat` (per-provider wire-body construction + response
+  parse) — wired through two ports (`HttpTransport`,
+  `Base64Encoder`). OpenRouter is now a clean composition of the
+  OpenAI parts with a different `ThinkingPolicy`, replacing the old
+  `extraBody` callback. Post-parse validation runs uniformly across
+  all providers so callers get "data is valid or call rejects"
+  semantics regardless of provider strictness.
+  `assertSchemaCompatible(schema, providerName)` is a sync precheck
+  that throws `SchemaIncompatibleError` at config-save time, not after
+  a 30 s LLM call. **21 boundary tests** including a `@ts-expect-error`
+  proving `generateText({schema:…})` is a compile-time error.
+
+- **Deepened reference resolver** at
+  `src/sidepanel/services/refResolver/`. Replaces ~70 lines of
+  imperative orchestration in `runners/extract.ts` with
+  `createRefResolver({ ncbi, clock?, onEvent? }).resolve(refs,
+  signal)`. Strategy chain — `InlineVerifier` → `DoiBatch` →
+  `TitleAuthor`, plus an `extraStrategies` slot for future
+  resolvers (CrossRef, OpenAlex, PDF-text inline-PMID verifier).
+  Priority is structural: the orchestrator strips resolved slots
+  before the next strategy runs, so a label resolved by an earlier
+  strategy is never sent to a later one. Single error path:
+  `resolve()` throws `ResolverAbortedError` only on abort; every
+  other failure lands in `result.transientErrors` with strategy
+  attribution. **`summary.bySource` is computed from the final
+  `ResolvedRef[]`** so per-ref `pmid_source` labels and aggregate
+  counts cannot drift. **Latent rate-limit bug fixed**: today's
+  3 req/sec NCBI budget covers DOI's ESearch+ESummary calls AND
+  title+author calls via a shared `TokenBucketRateLimiter` in the
+  production HTTP adapter — back-to-back DOI batches can no longer
+  burst above the budget. Test 6 verifies the sliding-1000ms-window
+  invariant under a virtual clock against the production algorithm
+  (millisecond-precision assertion, not a mock). **12 boundary
+  tests** + `runners/refResolverLog.ts` mapping events to log lines.
+
+- **Deepened canonizer** at `src/sidepanel/services/canonizer/`.
+  Replaces ~150 lines of orchestration in `runners/canonize.ts` with
+  `createCanonizer({ uniprot, layout, clock?, onEvent? }).canonize({
+  rows, range, signal })`. **`CanonizeColumnLayout` is first-class
+  config** — `freeText: number[]`, `entities: number[]`,
+  `isSkippableRow: predicate` — declared by the runner via the
+  exported `REACTION_LAYOUT`, passed to the factory. Future schema
+  changes (Notes column, Type column, alternate sheet formats) become
+  a one-line edit; the canonizer iterates the layout and dispatches
+  the right rewriter (free-text vs entity-cell) per column, so the
+  runner can't pick the wrong mechanism for a given column.
+  `UniprotPort` exposes three semantic methods
+  (`searchSparqlReviewed(batch)` / `searchSparqlTrembl(batch)` /
+  `searchRest(label, reviewedOnly)`); priority is structural and
+  trivially expressible (`expect(port.searchSparqlTrembl).not
+  .toHaveBeenCalledWith(['TP53'])`). `Clock.withTimeout` enforces
+  60s SPARQL / 15s REST limits; the production HTTP adapter wires
+  every fetch through `clock.withTimeout` so the 60s hang test passes
+  in zero virtual real time. The deliberate exclusion of protein-name
+  SPARQL paths (Timeless ↔ TIPIN cross-gene collisions) is baked in —
+  no public knob to re-enable. REST URL construction switched to
+  `URLSearchParams` (the previous `+`/`:` string-concat tripped on
+  labels containing those characters). `SmallMoleculeOracle` is an
+  injectable predicate so a future curator-managed metabolite list
+  can extend the bundled classifier without code changes.
+  **15 boundary tests** including the layout-dispatch and
+  alternate-layout future-proofing tests.
+
+- **Vitest configured** (`vitest.config.ts`, `npm run test`) plus
+  shared virtual-clock primitives in
+  `services/refResolver/adapters/clockVirtual.ts` and
+  `services/canonizer/adapters/clockVirtual.ts`. The `withTimeout`
+  algorithm is shared between the canonizer's real and virtual
+  clocks via `runWithTimeout` so production timeout enforcement is
+  exactly what tests run against.
+
+### Changed
+
+- **`runners/extract.ts`** lost ~70 lines of imperative pipeline plus
+  the local `extractJsonObject` and post-parse `validate()` calls —
+  the new LLM module owns JSON-fence stripping and validation, and
+  the new resolver owns priority + audit aggregation. The runner
+  re-associates resolved refs back onto the original LLM-output shape
+  by id and reads `pmidSourceBreakdown` straight off the resolver's
+  `summary.bySource`. Log lines from the resolver come through
+  `runners/refResolverLog.ts`.
+- **`runners/summate.ts`** switched to `provider.generateText(...)`.
+- **`runners/canonize.ts`** wires
+  `createHttpUniprotAdapter({fetch, clock})` +
+  `createCanonizer({uniprot, layout: REACTION_LAYOUT, clock,
+  onEvent})` and turns `rewritten[].after` rows into Sheets
+  `batchUpdateValues` payloads. ~150 lines → ~80 lines. Log mapping
+  via `runners/canonizerLog.ts`.
+- **`services/testConnection.ts`** switched to `provider.generateText`.
+- **`services/sheetRows.ts`** lost `ENTITY_COL_START` /
+  `ENTITY_COL_END` (the canonizer's layout owns column dispatch now).
+  `isSkippableRow` stays — still used by Summate.
+- **`services/entityParser.ts`** lost the dev-only `runChecks()` —
+  the new canonizer test suite (tests 5–8) covers everything it was
+  asserting.
+- **`tabs/CanonizeTab.tsx`** dropped the dev-only `runChecks()` import
+  + invocation.
+
+### Removed
+
+- `src/sidepanel/services/uniprot.ts`, `src/sidepanel/services/ncbi.ts`
+  (and the previously orphaned `src/sidepanel/services/projectsDir.ts`)
+  — superseded by the deepened modules' adapters
+  (`canonizer/adapters/uniprotHttp.ts`,
+  `refResolver/adapters/ncbiHttp.ts`,
+  `projectsDir/adapters/prod/*.ts`).
+
+User-visible behavior is byte-equivalent on the wire (same SPARQL
+query strings, same NCBI E-utilities calls, same chunking, same
+single-match acceptance, same disambiguation, same LLM wire bodies).
+Three additions over v2604: live per-strategy / per-pass progress in
+the side-panel log, the shared NCBI rate-limit fix, and a
+populated `transientErrors` list for failures that previously vanished
+silently. The refactors are structural; if a behavior changes, that's
+a regression.
+
 ## v2605 — 2026-05-09
 
 Deepened the projects-directory module: a single `ProjectsDir` state
