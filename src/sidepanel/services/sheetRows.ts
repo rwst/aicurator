@@ -43,10 +43,6 @@ export function colIndexToLetter(idx: number): string {
 }
 export const SUMMATE_READ_RANGE_END = colIndexToLetter(SOURCE_COL_END);
 
-// Entity columns C..F → indices 2..5.
-export const ENTITY_COL_START = 2;
-export const ENTITY_COL_END = 5;
-
 const PMID_URL_RE = /pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/;
 const BARE_PMID_RE = /^\s*(\d{4,9})\s*$/;
 

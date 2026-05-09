@@ -9,12 +9,8 @@ import {
   setRowSpanText,
 } from '../store/rowSpan';
 import { runCanonize, type RowRange } from '../runners/canonize';
-import { runChecks } from '../services/entityParser';
 import { isAbortError } from '../lib/abortError';
 import { parseRowRange } from '../services/sheetRows';
-
-// Run dev-only parser self-checks once on tab load.
-runChecks();
 
 export default function CanonizeTab() {
   const [error, setError] = createSignal<string | null>(null);

@@ -1,7 +1,6 @@
-// Canonize runner — no LLM. Reads the entity-name vocabulary from
-// columns C..F, batches a UniProt SPARQL query (human-only,
-// reviewed-first) with REST search fallback, and rewrites A..F
-// in-place.
+// Canonize runner — no LLM. Reads sheet rows, hands them to the
+// canonizer service which owns parse → classify → 3-pass UniProt
+// resolve → rewrite, then writes back the changed rows.
 
 import type { Log } from '../services/log';
 import {
@@ -10,21 +9,14 @@ import {
   getValues,
   quoteSheet,
 } from '../services/sheets';
+import { clampRowRange, type RowRange } from '../services/sheetRows';
 import {
-  compileReplacements,
-  parseCell,
-  rewriteCell,
-  rewriteFreeText,
-} from '../services/entityParser';
-import { resolveEntities } from '../services/uniprot';
-import { isLikelySmallMolecule } from '../services/smallMolecules';
-import {
-  clampRowRange,
-  ENTITY_COL_END,
-  ENTITY_COL_START,
-  isSkippableRow,
-  type RowRange,
-} from '../services/sheetRows';
+  createCanonizer,
+  REACTION_LAYOUT,
+} from '../services/canonizer';
+import { createHttpUniprotAdapter } from '../services/canonizer/adapters/uniprotHttp';
+import { createRealClock } from '../services/canonizer/adapters/clockReal';
+import { mapCanonizerEventToLog } from './canonizerLog';
 
 export type { RowRange };
 
@@ -72,114 +64,31 @@ export async function runCanonize(
     };
   }
 
-  const bareNames = new Set<string>();
-  for (let r = startRow; r <= endRow; r += 1) {
-    const row = allRows[r - 1] ?? [];
-    const title = row[0] ?? '';
-    if (isSkippableRow(title)) continue;
-    for (let c = ENTITY_COL_START; c <= ENTITY_COL_END; c += 1) {
-      const cell = row[c] ?? '';
-      const entities = parseCell(cell);
-      for (const e of entities) {
-        if (e.isGap) continue;
-        for (const comp of e.components) {
-          if (comp.bareName) bareNames.add(comp.bareName);
-        }
-      }
-    }
-  }
-  log.append(
-    'info',
-    `${bareNames.size} unique entity names in rows ${startRow}-${endRow}`,
-  );
+  const clock = createRealClock();
+  const uniprot = createHttpUniprotAdapter({
+    fetch: globalThis.fetch.bind(globalThis),
+    clock,
+  });
+  const canonizer = createCanonizer({
+    uniprot,
+    layout: REACTION_LAYOUT,
+    clock,
+    onEvent: (e) => mapCanonizerEventToLog(log, e),
+  });
 
-  if (bareNames.size === 0) {
-    log.append('warn', 'no parseable entity names found, nothing to do');
-    return {
-      uniqueEntities: 0,
-      skippedSmallMolecules: 0,
-      resolved: 0,
-      noMatch: 0,
-      ambiguous: 0,
-      rowsUpdated: 0,
-      totalRowsInRange: endRow - startRow + 1,
-    };
-  }
+  const { rewritten, report } = await canonizer.canonize({
+    rows: allRows,
+    range: { startRow, endRow },
+    signal,
+  });
 
-  // 3b. Partition: small molecules / ions skip the SPARQL call.
-  const smallMolecules: string[] = [];
-  const queryable: string[] = [];
-  for (const n of bareNames) {
-    if (isLikelySmallMolecule(n)) smallMolecules.push(n);
-    else queryable.push(n);
-  }
-  if (smallMolecules.length > 0) {
-    log.append(
-      'info',
-      `skipping ${smallMolecules.length} likely small molecules / ions: ${smallMolecules.slice(0, 8).join(', ')}${smallMolecules.length > 8 ? '…' : ''}`,
-    );
-  }
+  const updates = rewritten
+    .filter((r) => r.changed)
+    .map((r) => ({
+      range: `${sheetRef}!A${r.rowIndex}:F${r.rowIndex}`,
+      values: [r.after.slice(0, 6) as string[]],
+    }));
 
-  signal.throwIfAborted();
-  log.append(
-    'info',
-    `querying UniProt for ${queryable.length} candidate proteins (human, reviewed-first): ${queryable.join(', ')}`,
-  );
-  const sparqlStart = Date.now();
-  let resolution;
-  try {
-    resolution =
-      queryable.length > 0
-        ? await resolveEntities(queryable)
-        : { replacements: new Map(), noMatch: [], ambiguous: [] };
-  } catch (err) {
-    log.append('err', `UniProt query failed: ${(err as Error).message}`);
-    throw err;
-  }
-  log.append(
-    'ok',
-    `UniProt resolved in ${((Date.now() - sparqlStart) / 1000).toFixed(1)}s · ${resolution.replacements.size} mapped · ` +
-      `${resolution.noMatch.length} no-match · ${resolution.ambiguous.length} ambiguous`,
-  );
-  for (const n of resolution.noMatch) {
-    log.append('warn', `no UniProt match for "${n}" — leaving as is`);
-  }
-  for (const a of resolution.ambiguous) {
-    log.append(
-      'warn',
-      `ambiguous: "${a}" matched multiple reviewed-human proteins — leaving as is`,
-    );
-  }
-
-  signal.throwIfAborted();
-  const compiled = compileReplacements(resolution.replacements);
-  const updates: { range: string; values: string[][] }[] = [];
-  for (let r = startRow; r <= endRow; r += 1) {
-    const row = allRows[r - 1] ?? [];
-    const title = row[0] ?? '';
-    if (isSkippableRow(title)) continue;
-    const a = rewriteFreeText(row[0] ?? '', compiled);
-    const b = rewriteFreeText(row[1] ?? '', compiled);
-    const c = rewriteCell(row[2] ?? '', resolution.replacements);
-    const d = rewriteCell(row[3] ?? '', resolution.replacements);
-    const e = rewriteCell(row[4] ?? '', resolution.replacements);
-    const f = rewriteCell(row[5] ?? '', resolution.replacements);
-    if (
-      a !== (row[0] ?? '') ||
-      b !== (row[1] ?? '') ||
-      c !== (row[2] ?? '') ||
-      d !== (row[3] ?? '') ||
-      e !== (row[4] ?? '') ||
-      f !== (row[5] ?? '')
-    ) {
-      updates.push({
-        range: `${sheetRef}!A${r}:F${r}`,
-        values: [[a, b, c, d, e, f]],
-      });
-    }
-  }
-
-  // 6. Write back.
   if (updates.length > 0) {
     log.append('info', `writing ${updates.length} updated rows…`);
     await batchUpdateValues(input.spreadsheetId, updates);
@@ -189,11 +98,11 @@ export async function runCanonize(
   }
 
   return {
-    uniqueEntities: bareNames.size,
-    skippedSmallMolecules: smallMolecules.length,
-    resolved: resolution.replacements.size,
-    noMatch: resolution.noMatch.length,
-    ambiguous: resolution.ambiguous.length,
+    uniqueEntities: report.uniqueEntities,
+    skippedSmallMolecules: report.skippedSmallMolecules.length,
+    resolved: report.resolved,
+    noMatch: report.noMatch.length,
+    ambiguous: report.ambiguous.length,
     rowsUpdated: updates.length,
     totalRowsInRange: endRow - startRow + 1,
   };
