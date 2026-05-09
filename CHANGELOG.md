@@ -4,6 +4,76 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2605 — 2026-05-09
+
+Deepened the projects-directory module: a single `ProjectsDir` state
+machine replaces the scattered grant flow, with ports & adapters that
+make the renderer-crash invariants verifiable in tests.
+
+### Added
+
+- **`src/sidepanel/projectsDir/`** — a deepened module owning the
+  full lifecycle from "user has not yet picked a folder" to "module
+  exposes a usable, listed, write-permitted directory". Public surface:
+  `state()` (a discriminated `ProjectsDirState` —
+  `unpicked | granted | stale | wrong-folder | bootstrap-failed | cancelled`),
+  `grant()`, `forget()`, `refreshList()`, `ready()`. The
+  validate-before-escalate rule (chrome-issues.md §1) is structural:
+  there is no public way to call escalation without first passing
+  through name validation. The non-empty data: URL bootstrap
+  (chrome-issues.md §2) is enforced by a defensive check inside the
+  Downloads adapter. Every failure mode becomes a state variant — the
+  state machine never throws.
+- **Three ports, three production adapters**:
+  - `ChromeFsaPort` (`chromeFsa.ts`) — wraps `showDirectoryPicker`,
+    `queryPermission`, `requestPermission`, directory iteration; maps
+    `AbortError` → `{ kind: 'cancelled' }` and `NotFoundError` →
+    `StaleHandleError`. Hands out opaque `DirToken` strings to keep
+    the state machine free of FSA imports.
+  - `DownloadsPort` (`downloads.ts`) — wraps `chrome.downloads.download`;
+    rejects empty `data:` URLs defensively.
+  - `HandleStorePort` (`handleStore.ts`) — wraps `idb-keyval` with a
+    side-door `adoptHandle()` so a rehydrated handle can be interned
+    into the chromeFsa adapter's token table.
+- **In-memory fake adapters** at `projectsDir/adapters/fake/` —
+  declarative controls (`enqueuePick`, `setNextRequestResult`,
+  `putDir`, `invalidate`, `mintToken`, `callCounts`, `preseedHandle`)
+  let tests configure scenarios without jsdom or any FSA polyfill.
+- **Vitest** as a devDep, plus `npm run test`. Seven boundary tests
+  in `projectsDir/projectsDir.test.ts` cover the full grant flow,
+  cancel, wrong-folder (asserting `requestPermission` is NEVER called
+  on a non-validated handle — the renderer-crash invariant becomes
+  a verifiable test, not a code-review hope), bootstrap-failed,
+  stale-handle rehydration, mid-session permission revocation, and
+  AbortError after a partial flow.
+
+### Changed
+
+- **MainTab grant prompt** drives entirely off `projectsDir.state()`
+  with `Switch/Match`. The local `error` signal, the `isAbort`
+  predicate, the dual `onGrant` / `onReGrant` handlers, and their
+  try/catches are gone — every failure mode is now a state variant
+  with its own banner.
+- **Store slimmed down**. Removed `dirHandle`, `dirPermission`, `list`
+  from the `project` slice, and the imperative procedures
+  `hydrateProjectsDir`, `grantProjectsDir`, `reGrantProjectsDir`,
+  `forgetProjectsDir`, `refreshProjectList`, `verifyHandleExists`,
+  `resetToUnpicked`. Replaced with derived accessors (`rootHandle()`,
+  `projectList()`, `isGranted()`) and the singleton `projectsDir`.
+  `setStage` / `setPathwayName` now refresh the list through
+  `projectsDir.refreshList()` rather than mutating a parallel store
+  copy.
+- **`services/projectsDir.ts` split** into single-purpose homes:
+  `services/sheetUrl.ts` for `parseSheetUrl` /
+  `getActiveTabSheetUrl` / `findProjectByExactSheet`, and
+  `services/projectOps.ts` for `createProject` / `deleteProject` (which
+  take the granted root handle as input). `ExtractTab`, `SummateTab`,
+  and `CanonizeTab` switched from `project.dirHandle` /
+  `project.list` to the new derived accessors.
+
+User-visible behavior is byte-identical to v2604; the refactor is
+structural.
+
 ## v2604 — 2026-05-08
 
 Chrome Web Store submission prep and folder-grant UX fixes.

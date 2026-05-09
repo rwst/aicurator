@@ -54,7 +54,7 @@ const PINNED_KEY =
 export default defineManifest({
   manifest_version: 3,
   name: 'AICurator',
-  version: '26.4.0',
+  version: '26.5.0',
   description: 'Reactome curation workflow side panel',
 
   ...(isCwsBuild ? {} : { key: PINNED_KEY }),
