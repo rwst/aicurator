@@ -11,6 +11,8 @@ import ProcessTab, { type BadgeState } from './ProcessTab';
 import { summateLog } from '../services/log';
 import {
   project,
+  projectList,
+  rootHandle,
   setRunning,
   setStage,
   settings,
@@ -119,11 +121,10 @@ export default function SummateTab() {
     project.running === 'none' && hasProject() && spanIsValid();
 
   const rescanPdfs = async () => {
-    if (!project.dirHandle || !project.selectedName) return;
+    const root = rootHandle();
+    if (!root || !project.selectedName) return;
     try {
-      const projectDir = await project.dirHandle.getDirectoryHandle(
-        project.selectedName,
-      );
+      const projectDir = await root.getDirectoryHandle(project.selectedName);
       const map = await listPmidPdfs(projectDir);
       setPdfMap(map);
     } catch (err) {
@@ -133,7 +134,7 @@ export default function SummateTab() {
 
   const loadSheetRows = async () => {
     if (!project.selectedName) return;
-    const meta = project.list.find((p) => p.name === project.selectedName);
+    const meta = projectList().find((p) => p.name === project.selectedName);
     if (!meta) return;
     try {
       const sheetName = await getSheetName(meta.spreadsheetId, meta.gid);
@@ -175,8 +176,9 @@ export default function SummateTab() {
   const onStart = async () => {
     setError(null);
     if (!canStart()) return;
-    if (!project.dirHandle || !project.selectedName) return;
-    const meta = project.list.find((p) => p.name === project.selectedName);
+    const root = rootHandle();
+    if (!root || !project.selectedName) return;
+    const meta = projectList().find((p) => p.name === project.selectedName);
     if (!meta) {
       setError('Project metadata not found.');
       return;
@@ -196,9 +198,7 @@ export default function SummateTab() {
     activeAbort = new AbortController();
     setRunning('summate');
     try {
-      const projectDir = await project.dirHandle.getDirectoryHandle(
-        project.selectedName,
-      );
+      const projectDir = await root.getDirectoryHandle(project.selectedName);
       let pdfDir: FileSystemDirectoryHandle | null = null;
       try {
         pdfDir = await projectDir.getDirectoryHandle('PDF');
@@ -240,7 +240,7 @@ export default function SummateTab() {
     setError(null);
     if (!canMock()) return;
     if (!project.selectedName) return;
-    const meta = project.list.find((p) => p.name === project.selectedName);
+    const meta = projectList().find((p) => p.name === project.selectedName);
     if (!meta) return;
     activeAbort = new AbortController();
     setRunning('summate');

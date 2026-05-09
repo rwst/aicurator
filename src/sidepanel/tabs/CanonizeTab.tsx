@@ -1,7 +1,7 @@
 import { Show, createMemo, createSignal } from 'solid-js';
 import ProcessTab, { type BadgeState } from './ProcessTab';
 import { canonizeLog } from '../services/log';
-import { project, setRunning, setStage } from '../store';
+import { project, projectList, setRunning, setStage } from '../store';
 import {
   rowSpanMode,
   rowSpanText,
@@ -50,7 +50,7 @@ export default function CanonizeTab() {
     setError(null);
     if (!canStart()) return;
     if (!project.selectedName) return;
-    const meta = project.list.find((p) => p.name === project.selectedName);
+    const meta = projectList().find((p) => p.name === project.selectedName);
     if (!meta) {
       setError('Project metadata not found.');
       return;

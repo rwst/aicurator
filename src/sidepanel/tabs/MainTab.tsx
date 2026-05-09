@@ -1,18 +1,20 @@
-import { Show, For, createSignal } from 'solid-js';
+import { Match, Show, Switch, For, createSignal } from 'solid-js';
 import {
   PROVIDERS,
   saveStatus,
   setSetting,
   settings,
   project,
-  grantProjectsDir,
-  reGrantProjectsDir,
+  projectsDir,
+  projectList,
+  isGranted,
   setSelectedProject,
   createProjectAction,
   deleteProjectAction,
   type Provider,
 } from '../store';
-import { getActiveTabSheetUrl } from '../services/projectsDir';
+import type { ProjectsDirState } from '../projectsDir';
+import { getActiveTabSheetUrl } from '../services/sheetUrl';
 import { testConnection, type TestResult } from '../services/testConnection';
 
 // Derive the internal vYYXX label from the manifest's <YY>.<XX>.<patch>
@@ -35,34 +37,8 @@ export default function MainTab() {
     setTestStatus(result);
   };
 
-  const granted = () => project.dirPermission === 'granted';
   const hasProject = () => project.selectedName !== null;
-  const canCreate = () => granted() && newName().trim().length > 0;
-
-  // The folder picker throws AbortError when the user dismisses the dialog
-  // (Cancel / Esc / close). That's not a failure — don't surface it.
-  const isAbort = (err: unknown) =>
-    err instanceof DOMException && err.name === 'AbortError';
-
-  const onGrant = async () => {
-    setError(null);
-    try {
-      await grantProjectsDir();
-    } catch (err) {
-      if (isAbort(err)) return;
-      setError(`Could not grant access: ${(err as Error).message}`);
-    }
-  };
-
-  const onReGrant = async () => {
-    setError(null);
-    try {
-      await reGrantProjectsDir();
-    } catch (err) {
-      if (isAbort(err)) return;
-      setError(`Could not re-grant access: ${(err as Error).message}`);
-    }
-  };
+  const canCreate = () => isGranted() && newName().trim().length > 0;
 
   const onCreate = async () => {
     setError(null);
@@ -100,6 +76,8 @@ export default function MainTab() {
     }
   };
 
+  const dirState = () => projectsDir.state();
+
   return (
     <>
       <header class="header">
@@ -116,7 +94,7 @@ export default function MainTab() {
 
       <div class="scroll">
         <Show
-          when={granted()}
+          when={isGranted()}
           fallback={
             <div class="access-prompt">
               <span class="label">Projects directory</span>
@@ -130,22 +108,51 @@ export default function MainTab() {
                   Chrome will crash.
                 </strong>
               </p>
-              <Show
-                when={
-                  project.dirHandle &&
-                  (project.dirPermission === 'prompt' ||
-                    project.dirPermission === 'denied')
-                }
-                fallback={
-                  <button type="button" class="btn primary" onClick={onGrant}>
-                    Grant access
-                  </button>
-                }
+              <button
+                type="button"
+                class="btn primary"
+                onClick={() => void projectsDir.grant()}
               >
-                <button type="button" class="btn primary" onClick={onReGrant}>
-                  Re-grant access
-                </button>
-              </Show>
+                {dirState().kind === 'stale' ? 'Re-grant access' : 'Grant access'}
+              </button>
+              <Switch>
+                <Match
+                  when={
+                    dirState().kind === 'wrong-folder'
+                      ? (dirState() as Extract<ProjectsDirState, { kind: 'wrong-folder' }>)
+                      : null
+                  }
+                >
+                  {(w) => (
+                    <div class="banner danger">
+                      Picked folder is "{w().pickedName}" — it must be named
+                      "aicurator". Open <code>&lt;Downloads&gt;/aicurator/</code>
+                      {' '}in the picker, then click "Select folder".
+                    </div>
+                  )}
+                </Match>
+                <Match
+                  when={
+                    dirState().kind === 'bootstrap-failed'
+                      ? (dirState() as Extract<ProjectsDirState, { kind: 'bootstrap-failed' }>)
+                      : null
+                  }
+                >
+                  {(b) => (
+                    <div class="banner danger">
+                      Could not auto-create &lt;Downloads&gt;/aicurator/. Please
+                      create that folder manually in your Downloads directory,
+                      then click "Grant access" again. (Cause: {b().cause})
+                    </div>
+                  )}
+                </Match>
+                <Match when={dirState().kind === 'stale'}>
+                  <div class="banner warn">
+                    Permission to access the aicurator folder has expired.
+                    Click "Re-grant access".
+                  </div>
+                </Match>
+              </Switch>
               <Show when={error()}>
                 <div class="banner danger">{error()}</div>
               </Show>
@@ -163,10 +170,10 @@ export default function MainTab() {
                 void setSelectedProject(v === '' ? null : v);
               }}
             >
-              <Show when={project.list.length === 0}>
+              <Show when={projectList().length === 0}>
                 <option value="">— no project yet —</option>
               </Show>
-              <For each={project.list}>
+              <For each={projectList()}>
                 {(p) => <option value={p.name}>{p.name}</option>}
               </For>
             </select>
@@ -221,7 +228,7 @@ export default function MainTab() {
               id="s-dir"
               class="field mono"
               value={
-                granted()
+                isGranted()
                   ? '<Downloads>/aicurator/  (granted)'
                   : '<Downloads>/aicurator/  (not granted)'
               }

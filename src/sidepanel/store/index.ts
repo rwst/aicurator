@@ -1,24 +1,19 @@
-import { createEffect, createRoot, createSignal } from 'solid-js';
+import { createEffect, createMemo, createRoot, createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { clearAllLogs } from '../services/log';
 import { syncStorage } from './syncStorage';
 import { localStorage } from './localStorage';
+import { createProjectsDir, type ProjectMeta } from '../projectsDir';
+import { createProdProjectsDirPorts } from '../projectsDir/adapters/prod';
 import {
-  bootstrapAicuratorDir,
-  clearStoredHandle,
   createProject as fsCreateProject,
   deleteProject as fsDeleteProject,
+} from '../services/projectOps';
+import {
   findProjectByExactSheet,
   getActiveTabSheetUrl,
-  getStoredHandle,
-  listProjects,
-  pickDirectory,
-  queryPermission,
-  requestPermission,
-  setStoredHandle,
   type ParsedSheetUrl,
-  type ProjectMeta,
-} from '../services/projectsDir';
+} from '../services/sheetUrl';
 import { updateMagicFile, type Stage } from '../services/magicFile';
 
 export type Provider = 'Anthropic' | 'OpenAI' | 'OpenRouter' | 'Google';
@@ -79,15 +74,9 @@ const [settings, setSettings] = createStore<Settings>({ ...DEFAULT_SETTINGS });
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 const [saveStatus, setSaveStatus] = createSignal<SaveStatus>('idle');
 
-// dirPermission: the FS-Access permission state for the projects-dir
-// handle. 'unpicked' means the user has not yet granted any directory.
-export type DirPermission = PermissionState | 'unpicked';
 export type Running = 'none' | 'extract' | 'summate' | 'canonize';
 
 export interface ProjectsState {
-  dirHandle: FileSystemDirectoryHandle | null;
-  dirPermission: DirPermission;
-  list: ProjectMeta[];
   selectedName: string | null;
   pathwayName: string;
   stage: Stage;
@@ -95,14 +84,33 @@ export interface ProjectsState {
 }
 
 const [project, setProject] = createStore<ProjectsState>({
-  dirHandle: null,
-  dirPermission: 'unpicked',
-  list: [],
   selectedName: null,
   pathwayName: '',
   stage: 'none',
   running: 'none',
 });
+
+// ── ProjectsDir module (deepened) ────────────────────────
+
+export const projectsDir = createProjectsDir(createProdProjectsDirPorts());
+
+/** Granted root handle, or null. Used by tabs that need to dereference
+ *  a project subdirectory. */
+export const rootHandle = createMemo<FileSystemDirectoryHandle | null>(() => {
+  const s = projectsDir.state();
+  return s.kind === 'granted' ? s.handle : null;
+});
+
+/** Project list — derived from the granted variant. Empty when not granted. */
+export const projectList = createMemo<readonly ProjectMeta[]>(() => {
+  const s = projectsDir.state();
+  return s.kind === 'granted' ? s.list : [];
+});
+
+/** True when the directory is granted and ready for work. */
+export const isGranted = createMemo<boolean>(
+  () => projectsDir.state().kind === 'granted',
+);
 
 // Picked PDFs for Extract live as a separate signal, not in the createStore.
 // FS handles don't proxy cleanly through Solid's deep store proxies.
@@ -192,79 +200,21 @@ async function writeOne<K extends SettingsKey>(
 
 const SELECTED_PROJECT_KEY = 'selectedProject';
 
-// Probe whether the directory the handle refers to actually still exists
-// on disk. Permission state and existence are independent in Chrome:
-// queryPermission can return 'granted' for a handle whose underlying
-// folder has been removed.
-async function verifyHandleExists(
-  handle: FileSystemDirectoryHandle,
-): Promise<boolean> {
-  try {
-    const it = handle.values();
-    await it.next();
-    return true;
-  } catch (err) {
-    if (err && (err as Error).name === 'NotFoundError') return false;
-    throw err;
-  }
-}
-
-async function resetToUnpicked(): Promise<void> {
-  await clearStoredHandle();
-  setProject({
-    dirHandle: null,
-    dirPermission: 'unpicked',
-    list: [],
-    selectedName: null,
-  });
-}
-
-export async function hydrateProjectsDir(): Promise<void> {
-  const handle = await getStoredHandle();
-  if (!handle) {
-    setProject({ dirHandle: null, dirPermission: 'unpicked', list: [] });
-    return;
-  }
-  let perm: PermissionState;
-  try {
-    perm = await queryPermission(handle);
-  } catch (err) {
-    console.warn('[aicurator] stored handle is stale, clearing:', err);
-    await resetToUnpicked();
-    return;
-  }
-  if (perm === 'granted') {
-    // Permission cached, but does the folder still exist?
-    const exists = await verifyHandleExists(handle);
-    if (!exists) {
-      console.warn('[aicurator] aicurator/ folder removed since last session');
-      await resetToUnpicked();
-      return;
-    }
-  }
-  setProject({ dirHandle: handle, dirPermission: perm });
-  if (perm === 'granted') {
-    try {
-      await refreshProjectList();
-    } catch (err) {
-      console.warn('[aicurator] project list scan failed:', err);
-    }
-  }
-}
-
 function applyMetaToStore(name: string | null): void {
   if (!name) {
     setProject({ pathwayName: '', stage: 'none' });
     return;
   }
-  const meta = project.list.find((p) => p.name === name);
+  const meta = projectList().find((p) => p.name === name);
   if (meta) setProject({ pathwayName: meta.pathwayName, stage: meta.stage });
 }
 
-export async function refreshProjectList(): Promise<void> {
-  if (!project.dirHandle || project.dirPermission !== 'granted') return;
-  const list = await listProjects(project.dirHandle);
-  setProject('list', list);
+/** Resolve which project should be selected after a list refresh: keep the
+ *  stored choice if it still exists, otherwise fall back to the first
+ *  project, otherwise null. */
+async function reconcileSelectedFromList(
+  list: readonly ProjectMeta[],
+): Promise<void> {
   const stored = await syncStorage.get([SELECTED_PROJECT_KEY]);
   const candidate = stored[SELECTED_PROJECT_KEY];
   let next: string | null = null;
@@ -297,99 +247,17 @@ export async function setSelectedProject(name: string | null): Promise<void> {
   }
 }
 
-export async function grantProjectsDir(): Promise<void> {
-  // Pre-create <Downloads>/aicurator/ so the user has a visible target in
-  // the picker. If this fails (download policy, custom Downloads location,
-  // managed Chrome, etc.), the user would otherwise navigate to Downloads,
-  // see no aicurator/ folder, and cancel the picker in confusion. Surface
-  // the failure with an actionable message so they can create it manually.
-  try {
-    await bootstrapAicuratorDir();
-  } catch (err) {
-    console.warn('[aicurator] bootstrap failed:', err);
-    throw new Error(
-      'Could not auto-create <Downloads>/aicurator/. Please create that ' +
-        'folder manually in your Downloads directory, then click ' +
-        '"Grant access" again. ' +
-        `(Cause: ${(err as Error).message})`,
-    );
-  }
-  const handle = await pickDirectory();
-  // Validate folder name BEFORE escalating to readwrite. If the user
-  // picked the wrong folder (Downloads root, Desktop, etc.), throw now —
-  // never request readwrite on a system-special folder.
-  if (handle.name !== 'aicurator') {
-    throw new Error(
-      `Picked folder is "${handle.name}" — it must be named "aicurator". ` +
-        `Open <Downloads>/aicurator/ in the picker, then click "Select folder".`,
-    );
-  }
-  const perm = await requestPermission(handle);
-  if (perm !== 'granted') {
-    throw new Error(
-      'Read/write permission was not granted for the aicurator folder.',
-    );
-  }
-  await setStoredHandle(handle);
-  setProject({ dirHandle: handle, dirPermission: perm });
-  await refreshProjectList();
-}
-
-export async function reGrantProjectsDir(): Promise<void> {
-  if (!project.dirHandle) return grantProjectsDir();
-  let perm: PermissionState;
-  try {
-    perm = await requestPermission(project.dirHandle);
-  } catch (err) {
-    console.warn('[aicurator] re-grant failed, clearing stale handle:', err);
-    await resetToUnpicked();
-    throw new Error(
-      'The previous aicurator folder no longer exists. ' +
-        'Click "Grant access" to pick a new one.',
-    );
-  }
-  if (perm === 'granted') {
-    // Verify the folder is still on disk, even though the grant succeeded.
-    const exists = await verifyHandleExists(project.dirHandle);
-    if (!exists) {
-      await resetToUnpicked();
-      throw new Error(
-        'The previous aicurator folder no longer exists. ' +
-          'Click "Grant access" to pick a new one.',
-      );
-    }
-  }
-  setProject('dirPermission', perm);
-  if (perm === 'granted') {
-    try {
-      await refreshProjectList();
-    } catch (err) {
-      console.warn('[aicurator] project list scan failed:', err);
-    }
-  }
-}
-
-export async function forgetProjectsDir(): Promise<void> {
-  await clearStoredHandle();
-  setProject({
-    dirHandle: null,
-    dirPermission: 'unpicked',
-    list: [],
-    selectedName: null,
-  });
-}
-
 export async function createProjectAction(
   name: string,
   sheet: ParsedSheetUrl,
 ): Promise<void> {
-  if (!project.dirHandle || project.dirPermission !== 'granted')
-    throw new Error('Projects directory not granted');
+  const root = rootHandle();
+  if (!root) throw new Error('Projects directory not granted');
   try {
-    await fsCreateProject(project.dirHandle, name, sheet);
+    await fsCreateProject(root, name, sheet);
   } catch (err) {
     if (err && (err as Error).name === 'NotFoundError') {
-      await resetToUnpicked();
+      await projectsDir.forget();
       throw new Error(
         'The aicurator folder is no longer on disk. ' +
           'Click "Grant access" to pick it again.',
@@ -397,18 +265,18 @@ export async function createProjectAction(
     }
     throw err;
   }
-  await refreshProjectList();
+  await projectsDir.refreshList();
   await setSelectedProject(name);
 }
 
 export async function deleteProjectAction(name: string): Promise<void> {
-  if (!project.dirHandle || project.dirPermission !== 'granted')
-    throw new Error('Projects directory not granted');
+  const root = rootHandle();
+  if (!root) throw new Error('Projects directory not granted');
   try {
-    await fsDeleteProject(project.dirHandle, name);
+    await fsDeleteProject(root, name);
   } catch (err) {
     if (err && (err as Error).name === 'NotFoundError') {
-      await resetToUnpicked();
+      await projectsDir.forget();
       throw new Error(
         'The aicurator folder is no longer on disk. ' +
           'Click "Grant access" to pick it again.',
@@ -416,27 +284,19 @@ export async function deleteProjectAction(name: string): Promise<void> {
     }
     throw err;
   }
-  await refreshProjectList();
+  await projectsDir.refreshList();
 }
-
-// Re-export for convenience.
-export { setStoredHandle };
 
 // ── Per-project field helpers ────────────────────────────
 
 async function withProjectDir<T>(
   fn: (projectDir: FileSystemDirectoryHandle) => Promise<T>,
 ): Promise<T> {
-  if (
-    !project.dirHandle ||
-    project.dirPermission !== 'granted' ||
-    !project.selectedName
-  ) {
+  const root = rootHandle();
+  if (!root || !project.selectedName) {
     throw new Error('No active project');
   }
-  const projectDir = await project.dirHandle.getDirectoryHandle(
-    project.selectedName,
-  );
+  const projectDir = await root.getDirectoryHandle(project.selectedName);
   return await fn(projectDir);
 }
 
@@ -455,13 +315,8 @@ export function setPathwayName(name: string): void {
 async function persistPathwayName(name: string): Promise<void> {
   try {
     await withProjectDir((dir) => updateMagicFile(dir, { pathwayName: name }));
-    // Refresh list metadata to keep ProjectMeta in sync.
-    setProject(
-      'list',
-      project.list.map((p) =>
-        p.name === project.selectedName ? { ...p, pathwayName: name } : p,
-      ),
-    );
+    // Bump the metadata cached in the granted variant by re-scanning.
+    await projectsDir.refreshList();
   } catch (err) {
     console.warn('[aicurator] persist pathway name failed:', err);
   }
@@ -470,12 +325,7 @@ async function persistPathwayName(name: string): Promise<void> {
 export async function setStage(stage: Stage): Promise<void> {
   setProject('stage', stage);
   await withProjectDir((dir) => updateMagicFile(dir, { stage }));
-  setProject(
-    'list',
-    project.list.map((p) =>
-      p.name === project.selectedName ? { ...p, stage } : p,
-    ),
-  );
+  await projectsDir.refreshList();
 }
 
 export function setRunning(r: Running): void {
@@ -506,9 +356,6 @@ export function clearExtractPdfs(): void {
   setExtractPdfHandles([]);
 }
 
-// Avoid unused-var error from the bootstrapAicuratorDir re-export not used here.
-void bootstrapAicuratorDir;
-
 // ── Active-sheet match (display-only) ────────────────────
 // The ActiveProjectFooter uses this to show a "Switch to: <project>"
 // button when the focused Chrome tab is a Sheets URL that matches some
@@ -522,7 +369,7 @@ const [activeSheetMatch, setActiveSheetMatch] = createSignal<string | null>(
 export { activeSheetMatch };
 
 export async function refreshActiveSheetMatch(): Promise<void> {
-  if (project.dirPermission !== 'granted') {
+  if (!isGranted()) {
     setActiveSheetMatch(null);
     return;
   }
@@ -531,9 +378,41 @@ export async function refreshActiveSheetMatch(): Promise<void> {
     setActiveSheetMatch(null);
     return;
   }
-  const matched = findProjectByExactSheet(project.list, parsed);
+  const matched = findProjectByExactSheet(projectList(), parsed);
   setActiveSheetMatch(matched?.name ?? null);
 }
+
+// ── Reactive bridges ─────────────────────────────────────
+
+// Keep selectedName/pathwayName/stage in sync whenever the project list
+// in the granted variant changes (initial grant, re-grant, create,
+// delete, refresh after stage update). On initial hydration this picks
+// the stored selection; on subsequent changes it reconciles against
+// what's still present.
+createRoot(() => {
+  let prevList: readonly ProjectMeta[] | null = null;
+  createEffect(() => {
+    const list = projectList();
+    // First reactive pass — kick off the initial reconciliation.
+    if (prevList === null) {
+      prevList = list;
+      void reconcileSelectedFromList(list);
+      return;
+    }
+    // Subsequent passes — only react if the list contents changed.
+    if (prevList !== list) {
+      prevList = list;
+      // If the currently-selected project disappeared, pick a new one.
+      const cur = project.selectedName;
+      if (cur && !list.some((p) => p.name === cur)) {
+        void reconcileSelectedFromList(list);
+      } else {
+        // Refresh per-project metadata cached in the store.
+        applyMetaToStore(cur);
+      }
+    }
+  });
+});
 
 // Clear logs whenever the user switches between projects.
 // (Pure hydrate from null → name doesn't trigger this — that path keeps
@@ -553,7 +432,7 @@ createRoot(() => {
 // permission needs re-granting.
 createRoot(() => {
   createEffect(() => {
-    void project.list;
+    void projectList();
     void refreshActiveSheetMatch();
   });
 });

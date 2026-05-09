@@ -7,8 +7,8 @@ import ExtractTab from './tabs/ExtractTab';
 import SummateTab from './tabs/SummateTab';
 import CanonizeTab from './tabs/CanonizeTab';
 import {
-  hydrateProjectsDir,
   hydrateSettings,
+  projectsDir,
   refreshActiveSheetMatch,
   subscribeToStorageChanges,
 } from './store';
@@ -26,7 +26,7 @@ export default function App() {
     void hydrateSettings();
     void hydrateAllLogs();
     void (async () => {
-      await hydrateProjectsDir();
+      await projectsDir.ready();
       await refreshActiveSheetMatch();
     })();
 

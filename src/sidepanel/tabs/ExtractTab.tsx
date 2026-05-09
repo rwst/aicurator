@@ -6,7 +6,9 @@ import {
   clearExtractPdfs,
   extractPdfHandles,
   project,
+  projectList,
   removeExtractPdf,
+  rootHandle,
   setPathwayName,
   setRunning,
   setStage,
@@ -79,8 +81,9 @@ export default function ExtractTab() {
   const onStart = async () => {
     setError(null);
     if (!canStart()) return;
-    if (!project.dirHandle || !project.selectedName) return;
-    const projectMeta = project.list.find(
+    const root = rootHandle();
+    if (!root || !project.selectedName) return;
+    const projectMeta = projectList().find(
       (p) => p.name === project.selectedName,
     );
     if (!projectMeta) {
@@ -122,9 +125,7 @@ export default function ExtractTab() {
     activeAbort = new AbortController();
     setRunning('extract');
     try {
-      const projectDir = await project.dirHandle.getDirectoryHandle(
-        project.selectedName,
-      );
+      const projectDir = await root.getDirectoryHandle(project.selectedName);
       await runExtract({
         pathwayName: project.pathwayName,
         pdfHandles: extractPdfHandles(),
@@ -159,8 +160,9 @@ export default function ExtractTab() {
   const onMockTest = async () => {
     setError(null);
     if (!canMock()) return;
-    if (!project.dirHandle || !project.selectedName) return;
-    const projectMeta = project.list.find(
+    const root = rootHandle();
+    if (!root || !project.selectedName) return;
+    const projectMeta = projectList().find(
       (p) => p.name === project.selectedName,
     );
     if (!projectMeta) {
@@ -187,9 +189,7 @@ export default function ExtractTab() {
     activeAbort = new AbortController();
     setRunning('extract');
     try {
-      const projectDir = await project.dirHandle.getDirectoryHandle(
-        project.selectedName,
-      );
+      const projectDir = await root.getDirectoryHandle(project.selectedName);
       await runExtractMock({
         spreadsheetId: projectMeta.spreadsheetId,
         gid: projectMeta.gid,
