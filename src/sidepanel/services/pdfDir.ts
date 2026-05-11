@@ -2,7 +2,9 @@
 // in the service worker writes PMID-<id>_*.pdf files here on download;
 // we glob-by-PMID for Summate's per-row PDF lookup.
 
-const PMID_FILE_RE = /^PMID-(\d{4,9})_/;
+// Anchor on `.pdf` so we don't accidentally pick up the cached
+// <basename>.txt siblings written by getOrExtractText (pdfText.ts).
+const PMID_FILE_RE = /^PMID-(\d{4,9})_.+\.pdf$/i;
 
 export async function listPmidPdfs(
   projectDir: FileSystemDirectoryHandle,
