@@ -54,7 +54,7 @@ const PINNED_KEY =
 export default defineManifest({
   manifest_version: 3,
   name: 'AICurator',
-  version: '26.6.0',
+  version: '26.5.0',
   description: 'Reactome curation workflow side panel',
 
   ...(isCwsBuild ? {} : { key: PINNED_KEY }),
@@ -80,7 +80,6 @@ export default defineManifest({
     'https://rest.uniprot.org/*',
     'https://pmc.ncbi.nlm.nih.gov/*',
     'https://pubmed.ncbi.nlm.nih.gov/*',
-    'https://curator.reactome.org/*',
   ],
 
   oauth2: {
@@ -106,11 +105,6 @@ export default defineManifest({
       matches: ['https://pmc.ncbi.nlm.nih.gov/articles/*'],
       js: ['src/content/pmc-pmid.ts'],
       run_at: 'document_end',
-    },
-    {
-      matches: ['https://curator.reactome.org/*'],
-      js: ['src/content/curator-login.ts'],
-      run_at: 'document_idle',
     },
   ],
 
