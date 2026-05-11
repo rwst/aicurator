@@ -96,9 +96,17 @@ describe('ProjectsDir state machine', () => {
     expect(ports.controls.store.current()).toBeNull();
   });
 
-  it('bootstrap-failed: picker is not opened', async () => {
+  it('bootstrap-failed: wins over a successful pick; never escalates readwrite', async () => {
+    // After the parallel-bootstrap change the picker runs concurrently
+    // with the downloads bootstrap (to preserve transient user
+    // activation on Windows), so bootstrap-failed is no longer
+    // pre-emptive. The meaningful invariant is that a bootstrap
+    // failure still wins over whatever the picker returned, and the
+    // readwrite escalation never happens.
     const ports = createFakePorts();
     ports.controls.downloads.rejectAll(new Error('downloads disabled'));
+    const t = ports.controls.fsa.mintToken('aicurator');
+    ports.controls.fsa.enqueuePick({ kind: 'picked', token: t, name: 'aicurator' });
 
     const projectsDir = createProjectsDir(ports);
     await projectsDir.ready();
@@ -109,7 +117,7 @@ describe('ProjectsDir state machine', () => {
     if (s.kind !== 'bootstrap-failed') throw new Error('unreachable');
     expect(s.cause).toBe('downloads disabled');
 
-    expect(ports.controls.fsa.callCounts().pickDirectory).toBe(0);
+    expect(ports.controls.fsa.callCounts().requestPermission).toBe(0);
     expect(ports.controls.store.current()).toBeNull();
   });
 

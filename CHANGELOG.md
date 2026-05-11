@@ -4,6 +4,42 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2607 — 2026-05-11
+
+Windows fix for the projects-directory grant flow: the bootstrap
+download is now fired in parallel with `showDirectoryPicker` instead
+of being awaited before it, so the click's transient user activation
+stays live long enough for the picker dialog to render.
+
+### Fixed
+
+- **"Grant access" no longer fails silently on Windows.** On Windows
+  Chrome, awaiting `chrome.downloads.download` between the user's
+  click and `window.showDirectoryPicker` consumed the click's
+  transient user activation (likely Defender/SmartScreen latency on
+  the data: URL bootstrap), so the picker rejected with
+  `AbortError: The user aborted a request` before its dialog ever
+  appeared. `runFreshPick` in `src/sidepanel/projectsDir/index.ts`
+  now fires the `Downloads/aicurator/aicurator-init.txt` bootstrap
+  WITHOUT awaiting it, then awaits `pickDirectory()`, then collects
+  the bootstrap result. The 16-byte sentinel typically completes
+  during the picker's open animation so `aicurator/` is still
+  visible to the user on first run, and `bootstrap-failed` still
+  wins over a successful pick (no readwrite escalation in that
+  case). Linux/macOS behavior is unchanged — neither platform
+  exhibited the activation-consumption symptom.
+
+### Changed
+
+- **Boundary-test invariant updated.** The
+  `bootstrap-failed: picker is not opened` test pinned the old
+  pre-parallel ordering. Renamed to
+  `bootstrap-failed: wins over a successful pick; never escalates
+  readwrite`, with a stronger assertion: even when the picker
+  returns a successfully picked `aicurator` token, a bootstrap
+  rejection still lands as `bootstrap-failed` and
+  `requestPermission` is never called. All 55 tests pass.
+
 ## v2606 — 2026-05-09
 
 Three deepening refactors landed back-to-back: LLM provider, reference

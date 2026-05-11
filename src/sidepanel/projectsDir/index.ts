@@ -192,19 +192,36 @@ export function createProjectsDir(deps: ProjectsDirPorts): ProjectsDir {
   }
 
   async function runFreshPick(): Promise<void> {
-    // Bootstrap <Downloads>/aicurator/. Failure → bootstrap-failed.
-    try {
-      await downloads.downloadDataUrl({
+    // Kick off the Downloads/aicurator/ bootstrap WITHOUT awaiting — the
+    // click's transient user activation must still be live when
+    // showDirectoryPicker runs. Awaiting chrome.downloads.download here
+    // consumes the activation on Windows (Defender/SmartScreen latency)
+    // and the picker rejects with AbortError before its dialog renders.
+    // The 16-byte data: URL typically completes during the picker's open
+    // animation, so aicurator/ is visible to the user by the time they
+    // navigate to Downloads. (See CHANGELOG v2607.)
+    const bootstrapPromise = downloads
+      .downloadDataUrl({
         url: 'data:text/plain,aicurator-init',
         filename: 'aicurator/aicurator-init.txt',
-      });
-    } catch (err) {
-      setState({ kind: 'bootstrap-failed', cause: (err as Error).message });
-      return;
-    }
+      })
+      .then(
+        (): Error | null => null,
+        (err: unknown): Error =>
+          err instanceof Error ? err : new Error(String(err)),
+      );
 
     // Pick. AbortError → cancelled (port maps it before we see it).
     const outcome = await fsa.pickDirectory();
+    const bootstrapErr = await bootstrapPromise;
+
+    // bootstrap-failed takes priority — without aicurator/ in Downloads
+    // the picker showed an empty parent and any pick was incidental.
+    if (bootstrapErr) {
+      setState({ kind: 'bootstrap-failed', cause: bootstrapErr.message });
+      return;
+    }
+
     if (outcome.kind === 'cancelled') {
       setState({ kind: 'cancelled' });
       return;
