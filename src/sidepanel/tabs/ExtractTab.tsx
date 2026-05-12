@@ -5,6 +5,7 @@ import {
   addExtractPdfs,
   clearExtractPdfs,
   currentApiKey,
+  currentModelName,
   extractPdfHandles,
   project,
   projectList,
@@ -38,7 +39,7 @@ export default function ExtractTab() {
       return { kind: 'lock', text: 'enter pathway name' };
     if (extractPdfHandles().length === 0)
       return { kind: 'lock', text: 'add at least one PDF' };
-    if (currentApiKey().length === 0 || settings.modelName.length === 0)
+    if (currentApiKey().length === 0 || currentModelName().length === 0)
       return { kind: 'lock', text: 'configure provider in Settings' };
     return null;
   });
@@ -49,7 +50,7 @@ export default function ExtractTab() {
     extractPdfHandles().length >= 1 &&
     project.running === 'none' &&
     currentApiKey().length > 0 &&
-    settings.modelName.length > 0;
+    currentModelName().length > 0;
 
   const onAddPdf = async () => {
     setError(null);
@@ -122,7 +123,7 @@ export default function ExtractTab() {
         provider = makeProvider({
           provider: settings.provider,
           apiKey: currentApiKey(),
-          modelName: settings.modelName,
+          modelName: currentModelName(),
         });
       } catch (err) {
         setError((err as Error).message);

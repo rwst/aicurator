@@ -2,6 +2,7 @@ import { Match, Show, Switch, For, createSignal } from 'solid-js';
 import {
   PROVIDERS,
   apiKeyKeyFor,
+  modelNameKeyFor,
   saveStatus,
   setSetting,
   settings,
@@ -255,14 +256,23 @@ export default function MainTab() {
           </div>
 
           <div class="row">
-            <label for="s-model">Model Name</label>
+            <label for="s-model">{settings.provider} Model Name</label>
             <input
               id="s-model"
               class="field mono"
-              value={settings.modelName}
+              value={settings[modelNameKeyFor(settings.provider)]}
               placeholder="e.g. claude-opus-4-5, gpt-5-mini, anthropic/claude-opus-4-5"
-              onInput={(e) => setSetting('modelName', e.currentTarget.value)}
+              onInput={(e) =>
+                setSetting(
+                  modelNameKeyFor(settings.provider),
+                  e.currentTarget.value,
+                )
+              }
             />
+            <span class="help">
+              Saved in <code>&lt;aicurator&gt;/.aicurator-settings.json</code>;
+              each provider keeps its own model.
+            </span>
           </div>
 
           <div class="row">

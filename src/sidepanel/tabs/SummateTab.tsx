@@ -11,6 +11,7 @@ import ProcessTab, { type BadgeState } from './ProcessTab';
 import { summateLog } from '../services/log';
 import {
   currentApiKey,
+  currentModelName,
   project,
   projectList,
   rootHandle,
@@ -101,7 +102,7 @@ export default function SummateTab() {
       return { kind: 'running', text: 'running…' };
     if (project.selectedName === null)
       return { kind: 'lock', text: 'no project selected' };
-    if (currentApiKey().length === 0 || settings.modelName.length === 0)
+    if (currentApiKey().length === 0 || currentModelName().length === 0)
       return { kind: 'lock', text: 'configure provider in Settings' };
     if (mode() === 'span' && !spanIsValid())
       return { kind: 'lock', text: 'invalid span' };
@@ -114,7 +115,7 @@ export default function SummateTab() {
     project.running === 'none' &&
     hasProject() &&
     currentApiKey().length > 0 &&
-    settings.modelName.length > 0 &&
+    currentModelName().length > 0 &&
     spanIsValid() &&
     summatableRowCount() > 0;
 
@@ -189,7 +190,7 @@ export default function SummateTab() {
       provider = makeProvider({
         provider: settings.provider,
         apiKey: currentApiKey(),
-        modelName: settings.modelName,
+        modelName: currentModelName(),
       });
     } catch (err) {
       setError((err as Error).message);

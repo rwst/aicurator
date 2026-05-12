@@ -15,14 +15,15 @@ import {
   type ParsedSheetUrl,
 } from '../services/sheetUrl';
 import { updateMagicFile, type Stage } from '../services/magicFile';
+import {
+  emptyUserSettings,
+  readUserSettingsFile,
+  writeUserSettingsFile,
+  type UserSettingsFile,
+} from '../services/userSettingsFile';
+import { PROVIDERS, type Provider } from './providers';
 
-export type Provider = 'Anthropic' | 'OpenAI' | 'OpenRouter' | 'Google';
-export const PROVIDERS: readonly Provider[] = [
-  'Anthropic',
-  'OpenAI',
-  'OpenRouter',
-  'Google',
-] as const;
+export { PROVIDERS, type Provider };
 
 // Each provider needs its own API key — a single shared field would silently
 // send the wrong credential after a provider switch. Keys are stored in
@@ -44,9 +45,34 @@ export function apiKeyKeyFor(provider: Provider): ApiKeyKey {
   return API_KEY_BY_PROVIDER[provider];
 }
 
+// Each provider also keeps its own model name — switching the provider
+// dropdown must not silently re-use the last provider's model string
+// (e.g. an Anthropic id sent to OpenAI). Model names persist in the
+// `.aicurator-settings.json` file at the root of the granted aicurator
+// directory, alongside the current provider — never in chrome.storage.
+export type ModelNameKey =
+  | 'modelNameAnthropic'
+  | 'modelNameOpenAI'
+  | 'modelNameOpenRouter'
+  | 'modelNameGoogle';
+
+const MODEL_NAME_BY_PROVIDER: Record<Provider, ModelNameKey> = {
+  Anthropic: 'modelNameAnthropic',
+  OpenAI: 'modelNameOpenAI',
+  OpenRouter: 'modelNameOpenRouter',
+  Google: 'modelNameGoogle',
+};
+
+export function modelNameKeyFor(provider: Provider): ModelNameKey {
+  return MODEL_NAME_BY_PROVIDER[provider];
+}
+
 export interface Settings {
   provider: Provider;
-  modelName: string;
+  modelNameAnthropic: string;
+  modelNameOpenAI: string;
+  modelNameOpenRouter: string;
+  modelNameGoogle: string;
   apiKeyAnthropic: string;
   apiKeyOpenAI: string;
   apiKeyOpenRouter: string;
@@ -55,58 +81,43 @@ export interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   provider: 'Anthropic',
-  modelName: '',
+  modelNameAnthropic: '',
+  modelNameOpenAI: '',
+  modelNameOpenRouter: '',
+  modelNameGoogle: '',
   apiKeyAnthropic: '',
   apiKeyOpenAI: '',
   apiKeyOpenRouter: '',
   apiKeyGoogle: '',
 };
 
-const SETTINGS_KEYS = [
-  'provider',
-  'modelName',
+const STORAGE_SETTINGS_KEYS = [
   'apiKeyAnthropic',
   'apiKeyOpenAI',
   'apiKeyOpenRouter',
   'apiKeyGoogle',
 ] as const;
-type SettingsKey = (typeof SETTINGS_KEYS)[number];
+type StorageSettingsKey = (typeof STORAGE_SETTINGS_KEYS)[number];
 
-// Whitelist of keys that live in chrome.storage.local instead of sync.
-// API keys are the only secrets we hold; everything else syncs.
-const LOCAL_ONLY_KEYS: ReadonlySet<string> = new Set<string>([
-  'apiKeyAnthropic',
-  'apiKeyOpenAI',
-  'apiKeyOpenRouter',
-  'apiKeyGoogle',
-]);
+const FILE_SETTINGS_KEYS = [
+  'provider',
+  'modelNameAnthropic',
+  'modelNameOpenAI',
+  'modelNameOpenRouter',
+  'modelNameGoogle',
+] as const;
+type FileSettingsKey = (typeof FILE_SETTINGS_KEYS)[number];
+
+type SettingsKey = StorageSettingsKey | FileSettingsKey;
+
+// All chrome.storage-resident settings (API keys) are local-only secrets.
+function isFileBackedKey(key: SettingsKey): key is FileSettingsKey {
+  return (FILE_SETTINGS_KEYS as readonly string[]).includes(key);
+}
 
 const LEGACY_API_KEY = 'apiKey';
-
-function backendFor(key: string): 'local' | 'sync' {
-  return LOCAL_ONLY_KEYS.has(key) ? 'local' : 'sync';
-}
-
-async function splitGet(
-  keys: readonly string[],
-): Promise<Record<string, unknown>> {
-  const localKeys = keys.filter((k) => backendFor(k) === 'local');
-  const syncKeys = keys.filter((k) => backendFor(k) === 'sync');
-  const [local, sync] = await Promise.all([
-    localStorage.get(localKeys),
-    syncStorage.get(syncKeys),
-  ]);
-  return { ...sync, ...local };
-}
-
-async function splitSet(items: Record<string, unknown>): Promise<void> {
-  const local: Record<string, unknown> = {};
-  const sync: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(items)) {
-    (backendFor(k) === 'local' ? local : sync)[k] = v;
-  }
-  await Promise.all([localStorage.set(local), syncStorage.set(sync)]);
-}
+const LEGACY_PROVIDER_KEY = 'provider';
+const LEGACY_MODEL_NAME_KEY = 'modelName';
 
 // ── Reactive state ───────────────────────────────────────
 const [settings, setSettings] = createStore<Settings>({ ...DEFAULT_SETTINGS });
@@ -165,18 +176,14 @@ function isProvider(v: unknown): v is Provider {
   return typeof v === 'string' && (PROVIDERS as readonly string[]).includes(v);
 }
 
-function applyExternalSetting(key: SettingsKey, value: unknown): void {
-  if (key === 'provider') {
-    if (isProvider(value)) setSettings('provider', value);
-  } else if (typeof value === 'string') {
-    setSettings(key, value);
-  }
+function applyStorageSetting(key: StorageSettingsKey, value: unknown): void {
+  if (typeof value === 'string') setSettings(key, value);
 }
 
 export async function hydrateSettings(): Promise<void> {
-  const stored = await splitGet(SETTINGS_KEYS as readonly string[]);
-  for (const key of SETTINGS_KEYS) {
-    if (key in stored) applyExternalSetting(key, stored[key]);
+  const stored = await localStorage.get(STORAGE_SETTINGS_KEYS as readonly string[]);
+  for (const key of STORAGE_SETTINGS_KEYS) {
+    if (key in stored) applyStorageSetting(key, stored[key]);
   }
   await migrateLegacyApiKey();
 }
@@ -194,9 +201,33 @@ async function migrateLegacyApiKey(): Promise<void> {
   const slot = apiKeyKeyFor(settings.provider);
   if (settings[slot].length === 0) {
     setSettings(slot, legacy);
-    await splitSet({ [slot]: legacy });
+    await localStorage.set({ [slot]: legacy });
   }
   await localStorage.remove([LEGACY_API_KEY]);
+}
+
+// One-shot migration: pre-v2609 stored `provider` and a single `modelName`
+// in chrome.storage.sync. After the user grants the aicurator directory we
+// surface those values as the initial file contents (so a returning user
+// keeps their selection), then drop the legacy keys so subsequent runs are
+// no-ops.
+async function migrateLegacySyncedSettings(): Promise<void> {
+  const stored = await syncStorage.get([
+    LEGACY_PROVIDER_KEY,
+    LEGACY_MODEL_NAME_KEY,
+  ]);
+  const legacyProvider = stored[LEGACY_PROVIDER_KEY];
+  const legacyModelName = stored[LEGACY_MODEL_NAME_KEY];
+  if (isProvider(legacyProvider)) {
+    setSettings('provider', legacyProvider);
+  }
+  if (typeof legacyModelName === 'string' && legacyModelName.length > 0) {
+    const slot = modelNameKeyFor(settings.provider);
+    if (settings[slot].length === 0) {
+      setSettings(slot, legacyModelName);
+    }
+  }
+  await syncStorage.remove([LEGACY_PROVIDER_KEY, LEGACY_MODEL_NAME_KEY]);
 }
 
 /** API key for the currently-selected provider. Reactive — re-runs when the
@@ -205,16 +236,21 @@ export function currentApiKey(): string {
   return settings[apiKeyKeyFor(settings.provider)];
 }
 
+/** Model name for the currently-selected provider. Reactive — re-runs when
+ *  the user switches the provider dropdown or types into the model field. */
+export function currentModelName(): string {
+  return settings[modelNameKeyFor(settings.provider)];
+}
+
 export function subscribeToStorageChanges(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
-    for (const key of SETTINGS_KEYS) {
+    if (area !== 'local') return;
+    for (const key of STORAGE_SETTINGS_KEYS) {
       const change = changes[key];
       if (!change) continue;
-      const expectedArea = backendFor(key);
-      if (area !== expectedArea) continue;
       // Echo guard: skip if equal to current store value.
       if (settings[key] === change.newValue) continue;
-      applyExternalSetting(key, change.newValue);
+      applyStorageSetting(key, change.newValue);
     }
   });
 }
@@ -223,7 +259,11 @@ export function subscribeToStorageChanges(): void {
 const DEBOUNCE_MS = 250;
 const SAVED_FLASH_MS = 5000;
 
-const pendingTimers = new Map<SettingsKey, ReturnType<typeof setTimeout>>();
+const pendingStorageTimers = new Map<
+  StorageSettingsKey,
+  ReturnType<typeof setTimeout>
+>();
+let pendingFileTimer: ReturnType<typeof setTimeout> | null = null;
 let savedFlashTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function setSetting<K extends SettingsKey>(
@@ -231,30 +271,72 @@ export function setSetting<K extends SettingsKey>(
   value: Settings[K],
 ): void {
   setSettings(key, value);
-  const existing = pendingTimers.get(key);
+  if (isFileBackedKey(key)) {
+    if (pendingFileTimer) clearTimeout(pendingFileTimer);
+    pendingFileTimer = setTimeout(() => {
+      pendingFileTimer = null;
+      void writeFileSettings();
+    }, DEBOUNCE_MS);
+    return;
+  }
+  const storageKey = key as StorageSettingsKey;
+  const existing = pendingStorageTimers.get(storageKey);
   if (existing) clearTimeout(existing);
-  pendingTimers.set(
-    key,
+  pendingStorageTimers.set(
+    storageKey,
     setTimeout(() => {
-      pendingTimers.delete(key);
-      void writeOne(key, value);
+      pendingStorageTimers.delete(storageKey);
+      void writeStorageOne(storageKey, settings[storageKey]);
     }, DEBOUNCE_MS),
   );
 }
 
-async function writeOne<K extends SettingsKey>(
-  key: K,
-  value: Settings[K],
+function flashSaved(): void {
+  setSaveStatus('saved');
+  if (savedFlashTimer) clearTimeout(savedFlashTimer);
+  savedFlashTimer = setTimeout(() => {
+    savedFlashTimer = null;
+    setSaveStatus('idle');
+  }, SAVED_FLASH_MS);
+}
+
+async function writeStorageOne(
+  key: StorageSettingsKey,
+  value: string,
 ): Promise<void> {
   setSaveStatus('saving');
   try {
-    await splitSet({ [key]: value });
-    setSaveStatus('saved');
-    if (savedFlashTimer) clearTimeout(savedFlashTimer);
-    savedFlashTimer = setTimeout(() => {
-      savedFlashTimer = null;
-      setSaveStatus('idle');
-    }, SAVED_FLASH_MS);
+    await localStorage.set({ [key]: value });
+    flashSaved();
+  } catch (err) {
+    console.error('[aicurator] settings save failed:', err);
+    setSaveStatus('error');
+  }
+}
+
+function snapshotFileSettings(): UserSettingsFile {
+  const seed = emptyUserSettings();
+  return {
+    ...seed,
+    provider: settings.provider,
+    modelNames: {
+      Anthropic: settings.modelNameAnthropic,
+      OpenAI: settings.modelNameOpenAI,
+      OpenRouter: settings.modelNameOpenRouter,
+      Google: settings.modelNameGoogle,
+    },
+  };
+}
+
+async function writeFileSettings(): Promise<void> {
+  const root = rootHandle();
+  // No granted directory yet — keep the change in memory; it'll be flushed
+  // by the grant-effect below once the user grants access.
+  if (!root) return;
+  setSaveStatus('saving');
+  try {
+    await writeUserSettingsFile(root, snapshotFileSettings());
+    flashSaved();
   } catch (err) {
     console.error('[aicurator] settings save failed:', err);
     setSaveStatus('error');
@@ -499,5 +581,45 @@ createRoot(() => {
   createEffect(() => {
     void projectList();
     void refreshActiveSheetMatch();
+  });
+});
+
+// Hydrate provider + per-provider model names from
+// `.aicurator-settings.json` at the root of the granted aicurator
+// directory whenever the directory transitions to `granted`. If no
+// file exists yet, drain the legacy chrome.storage.sync `provider` /
+// `modelName` (one-shot) and seed the file with current values. This
+// is the only place that reads/writes the file on the granted-only
+// path; `setSetting` debounces follow-up writes through
+// `writeFileSettings`.
+createRoot(() => {
+  let lastRoot: FileSystemDirectoryHandle | null = null;
+  createEffect(() => {
+    const root = rootHandle();
+    if (root === lastRoot) return;
+    lastRoot = root;
+    if (!root) return;
+    void (async () => {
+      try {
+        const existing = await readUserSettingsFile(root);
+        if (existing) {
+          setSettings('provider', existing.provider);
+          setSettings('modelNameAnthropic', existing.modelNames.Anthropic);
+          setSettings('modelNameOpenAI', existing.modelNames.OpenAI);
+          setSettings('modelNameOpenRouter', existing.modelNames.OpenRouter);
+          setSettings('modelNameGoogle', existing.modelNames.Google);
+          // Legacy keys, if any, are now strictly redundant — drop them.
+          await syncStorage.remove([LEGACY_PROVIDER_KEY, LEGACY_MODEL_NAME_KEY]);
+          return;
+        }
+        // First-grant bootstrap: pull legacy synced values into the
+        // in-memory store, then write the file from the resulting
+        // snapshot so the user's prior selection is preserved.
+        await migrateLegacySyncedSettings();
+        await writeUserSettingsFile(root, snapshotFileSettings());
+      } catch (err) {
+        console.warn('[aicurator] hydrate user settings file failed:', err);
+      }
+    })();
   });
 });

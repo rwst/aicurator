@@ -13,4 +13,8 @@ export const syncStorage = {
     if (Object.keys(items).length === 0) return;
     await chrome.storage.sync.set(items);
   },
+  async remove(keys: readonly string[]): Promise<void> {
+    if (keys.length === 0) return;
+    await chrome.storage.sync.remove(keys as unknown as string[]);
+  },
 };

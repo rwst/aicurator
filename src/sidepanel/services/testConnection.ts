@@ -1,5 +1,5 @@
 import { makeProvider } from '../llm/provider';
-import { currentApiKey, settings } from '../store';
+import { currentApiKey, currentModelName, settings } from '../store';
 
 export interface TestResult {
   ok: boolean;
@@ -14,11 +14,12 @@ const TIMEOUT_MS = 30_000;
 // Settings — never used by the real Extract / Summate pipelines.
 export async function testConnection(): Promise<TestResult> {
   const apiKey = currentApiKey();
+  const modelName = currentModelName();
   if (!apiKey) {
     return { ok: false, message: `${settings.provider} API key is not set` };
   }
-  if (!settings.modelName) {
-    return { ok: false, message: 'Model name is not set' };
+  if (!modelName) {
+    return { ok: false, message: `${settings.provider} model name is not set` };
   }
 
   const ctrl = new AbortController();
@@ -28,7 +29,7 @@ export async function testConnection(): Promise<TestResult> {
     const provider = makeProvider({
       provider: settings.provider,
       apiKey,
-      modelName: settings.modelName,
+      modelName,
     });
     const result = await provider.generateText(
       {
