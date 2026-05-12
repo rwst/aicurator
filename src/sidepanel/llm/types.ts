@@ -77,6 +77,20 @@ export interface Provider {
   ): Promise<JsonResult<T>>;
 }
 
+/** Thrown by generateJson when the provider returned a 2xx response
+ *  whose body could not be coerced into the requested schema (no JSON
+ *  object found, JSON.parse failed, or post-parse schema validation
+ *  failed). Carries the raw response text so callers can dump it for
+ *  inspection without re-running the LLM call. */
+export class JsonParseError extends Error {
+  readonly raw: string;
+  constructor(message: string, raw: string) {
+    super(message);
+    this.name = 'JsonParseError';
+    this.raw = raw;
+  }
+}
+
 /** Thrown by assertSchemaCompatible when the provider would silently
  *  drop schema features. Use to short-circuit at config-save time. */
 export class SchemaIncompatibleError extends Error {

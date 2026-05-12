@@ -11,6 +11,7 @@ import type { ThinkingPolicy } from './strategies/thinkingPolicy';
 import type { MessageFormat } from './strategies/messageFormat';
 import { validate, type JsonSchema } from '../services/jsonSchema';
 import {
+  JsonParseError,
   SchemaIncompatibleError,
   type EnforcementMode,
   type JsonRequest,
@@ -118,11 +119,19 @@ export function composeProvider(parts: ComposeParts): Provider {
       if (prep.report.lossy) warnings.push(prep.report);
 
       const { raw, result } = await send(req, prep, signal);
-      const parsed = extractJsonObject(result.text);
-      // Post-parse validation — uniform across providers regardless of
-      // enforcement strictness, so callers always get "data is valid or
-      // call rejects" semantics.
-      validate(parsed, req.schema as JsonSchema);
+      let parsed: unknown;
+      try {
+        parsed = extractJsonObject(result.text);
+        // Post-parse validation — uniform across providers regardless of
+        // enforcement strictness, so callers always get "data is valid or
+        // call rejects" semantics.
+        validate(parsed, req.schema as JsonSchema);
+      } catch (err) {
+        // Wrap any text-→-JSON failure with the raw response so the
+        // caller can dump it for inspection without re-running the
+        // (expensive) LLM call.
+        throw new JsonParseError((err as Error).message, result.text);
+      }
 
       const data = parsed as T;
       if (parts.enforcement === 'strict') {
@@ -175,13 +184,23 @@ export function assertSchemaCompatible(
 // last '}'.
 
 function extractJsonObject(raw: string): unknown {
-  let s = raw.trim();
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new Error('LLM response was empty');
+  }
+  let s = trimmed;
   const fence = /```(?:json)?\s*([\s\S]*?)\s*```/.exec(s);
   if (fence) s = fence[1].trim();
   const firstBrace = s.indexOf('{');
   const lastBrace = s.lastIndexOf('}');
   if (firstBrace < 0 || lastBrace < 0) {
-    throw new Error('LLM response did not contain a JSON object');
+    throw new Error(
+      `LLM response did not contain a JSON object; first 500 chars: ${snippet(raw)}`,
+    );
   }
   return JSON.parse(s.slice(firstBrace, lastBrace + 1));
+}
+
+function snippet(s: string): string {
+  return s.length > 500 ? `${s.slice(0, 500)}…` : s;
 }

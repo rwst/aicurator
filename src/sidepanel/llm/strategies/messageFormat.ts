@@ -268,10 +268,45 @@ export function makeOpenAIFormat(opts: OpenAIFormatOptions = {}): MessageFormat 
     },
     parse(raw): LlmCallResult {
       const json = raw as {
-        choices?: { message?: { content?: string } }[];
+        error?: { message?: string; code?: string | number };
+        choices?: {
+          finish_reason?: string;
+          message?: {
+            content?: string | null;
+            refusal?: string | null;
+            reasoning?: string | null;
+          };
+        }[];
         usage?: { prompt_tokens: number; completion_tokens: number };
       };
-      const text = json.choices?.[0]?.message?.content ?? '';
+      // OpenRouter (and occasionally OpenAI) sometimes return HTTP 200
+      // with a top-level `error` body — for example when the upstream
+      // provider rejected the request after OpenRouter accepted it.
+      // composeProvider only inspects HTTP status, so without this
+      // check the error sails through as an empty `text`.
+      if (json.error?.message) {
+        throw new Error(`${label}: ${json.error.message}`);
+      }
+      const choice = json.choices?.[0];
+      const msg = choice?.message;
+      const text = msg?.content ?? '';
+      if (text.length === 0) {
+        // Empty visible content — surface the most useful next-best
+        // signal so callers don't get a bare "no JSON object" downstream.
+        if (msg?.refusal) {
+          throw new Error(`${label}: model refused to answer: ${msg.refusal}`);
+        }
+        if (msg?.reasoning) {
+          throw new Error(
+            `${label}: response had only reasoning content (no visible answer); reasoning preview: ${msg.reasoning.slice(0, 300)}`,
+          );
+        }
+        if (choice?.finish_reason && choice.finish_reason !== 'stop') {
+          throw new Error(
+            `${label}: response was empty (finish_reason: ${choice.finish_reason})`,
+          );
+        }
+      }
       return {
         text,
         usage: json.usage

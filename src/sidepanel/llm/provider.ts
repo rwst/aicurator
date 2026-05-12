@@ -28,7 +28,7 @@ export type {
   Usage,
   SanitizationReport,
 } from './types';
-export { SchemaIncompatibleError } from './types';
+export { JsonParseError, SchemaIncompatibleError } from './types';
 
 export interface ProviderSettings {
   provider: ProviderName;

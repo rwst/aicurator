@@ -4,6 +4,7 @@
 
 import type { Log } from '../services/log';
 import type { Provider } from '../llm/provider';
+import { JsonParseError } from '../llm/provider';
 import { EXTRACT_SYSTEM_PROMPT } from '../prompts/extract.system';
 import {
   batchUpdateValues,
@@ -271,16 +272,32 @@ export async function runExtract(input: ExtractInput): Promise<ExtractReport> {
 
 Extract the reaction graph from the attached PDFs. Output the JSON object per the schema in the system prompt.`;
   const llmStart = Date.now();
-  const result = await input.provider.generateJson<RawExtractOutput>(
-    {
-      systemPrompt: EXTRACT_SYSTEM_PROMPT,
-      userText,
-      pdfs,
-      schema: EXTRACT_SCHEMA,
-      maxOutputTokens: 32768,
-    },
-    signal,
-  );
+  let result;
+  try {
+    result = await input.provider.generateJson<RawExtractOutput>(
+      {
+        systemPrompt: EXTRACT_SYSTEM_PROMPT,
+        userText,
+        pdfs,
+        schema: EXTRACT_SCHEMA,
+        maxOutputTokens: 32768,
+      },
+      signal,
+    );
+  } catch (err) {
+    // On a JSON parse failure (empty / non-JSON / invalid-against-schema
+    // response) the provider gives us the raw text via JsonParseError.
+    // Persist it so the curator can inspect what came back without
+    // re-running the LLM call.
+    if (err instanceof JsonParseError) {
+      await writeDebugFile(input.projectDir, 'extract-response.txt', err.raw);
+      log.append(
+        'warn',
+        'raw LLM response dumped to <project>/extract-response.txt for inspection',
+      );
+    }
+    throw err;
+  }
   log.append(
     'ok',
     `LLM responded in ${((Date.now() - llmStart) / 1000).toFixed(1)}s` +
