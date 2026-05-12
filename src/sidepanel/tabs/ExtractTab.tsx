@@ -82,50 +82,53 @@ export default function ExtractTab() {
   const onStart = async () => {
     setError(null);
     if (!canStart()) return;
-    const root = rootHandle();
-    if (!root || !project.selectedName) return;
-    const projectMeta = projectList().find(
-      (p) => p.name === project.selectedName,
-    );
-    if (!projectMeta) {
-      setError('Project metadata not found in store.');
-      return;
-    }
-
-    // Re-run modal subsumes empty-sheet check (Q7 + §1.6 of plan).
-    if (project.stage !== 'none') {
-      if (
-        !window.confirm(
-          'Re-running Extract will overwrite the sheet header + rows and reset Summate / Canonize state.\n\nContinue?',
-        )
-      )
-        return;
-    } else if (
-      await hasUnrelatedSheetData(projectMeta.spreadsheetId, projectMeta.gid)
-    ) {
-      if (
-        !window.confirm(
-          '⚠ The target sheet contains data in row 1 that is not the AICurator 12-column header.\n\nProceeding will overwrite it. Continue?',
-        )
-      )
-        return;
-    }
-
-    let provider;
-    try {
-      provider = makeProvider({
-        provider: settings.provider,
-        apiKey: currentApiKey(),
-        modelName: settings.modelName,
-      });
-    } catch (err) {
-      setError((err as Error).message);
-      return;
-    }
-
+    // Flip to Cancel synchronously so the user gets immediate feedback and
+    // a second click can't stack a duplicate request while pre-flight (the
+    // sheet-probe network call) is in flight.
     activeAbort = new AbortController();
     setRunning('extract');
     try {
+      const root = rootHandle();
+      if (!root || !project.selectedName) return;
+      const projectMeta = projectList().find(
+        (p) => p.name === project.selectedName,
+      );
+      if (!projectMeta) {
+        setError('Project metadata not found in store.');
+        return;
+      }
+
+      // Re-run modal subsumes empty-sheet check (Q7 + §1.6 of plan).
+      if (project.stage !== 'none') {
+        if (
+          !window.confirm(
+            'Re-running Extract will overwrite the sheet header + rows and reset Summate / Canonize state.\n\nContinue?',
+          )
+        )
+          return;
+      } else if (
+        await hasUnrelatedSheetData(projectMeta.spreadsheetId, projectMeta.gid)
+      ) {
+        if (
+          !window.confirm(
+            '⚠ The target sheet contains data in row 1 that is not the AICurator 12-column header.\n\nProceeding will overwrite it. Continue?',
+          )
+        )
+          return;
+      }
+
+      let provider;
+      try {
+        provider = makeProvider({
+          provider: settings.provider,
+          apiKey: currentApiKey(),
+          modelName: settings.modelName,
+        });
+      } catch (err) {
+        setError((err as Error).message);
+        return;
+      }
+
       const projectDir = await root.getDirectoryHandle(project.selectedName);
       await runExtract({
         pathwayName: project.pathwayName,
@@ -161,35 +164,35 @@ export default function ExtractTab() {
   const onMockTest = async () => {
     setError(null);
     if (!canMock()) return;
-    const root = rootHandle();
-    if (!root || !project.selectedName) return;
-    const projectMeta = projectList().find(
-      (p) => p.name === project.selectedName,
-    );
-    if (!projectMeta) {
-      setError('Project metadata not found in store.');
-      return;
-    }
-    if (project.stage !== 'none') {
-      if (
-        !window.confirm(
-          'Re-running mock Extract will overwrite the sheet and reset Summate / Canonize state.\n\nContinue?',
-        )
-      )
-        return;
-    } else if (
-      await hasUnrelatedSheetData(projectMeta.spreadsheetId, projectMeta.gid)
-    ) {
-      if (
-        !window.confirm(
-          '⚠ The target sheet contains data in row 1 that is not the AICurator 12-column header.\n\nProceeding will overwrite it. Continue?',
-        )
-      )
-        return;
-    }
     activeAbort = new AbortController();
     setRunning('extract');
     try {
+      const root = rootHandle();
+      if (!root || !project.selectedName) return;
+      const projectMeta = projectList().find(
+        (p) => p.name === project.selectedName,
+      );
+      if (!projectMeta) {
+        setError('Project metadata not found in store.');
+        return;
+      }
+      if (project.stage !== 'none') {
+        if (
+          !window.confirm(
+            'Re-running mock Extract will overwrite the sheet and reset Summate / Canonize state.\n\nContinue?',
+          )
+        )
+          return;
+      } else if (
+        await hasUnrelatedSheetData(projectMeta.spreadsheetId, projectMeta.gid)
+      ) {
+        if (
+          !window.confirm(
+            '⚠ The target sheet contains data in row 1 that is not the AICurator 12-column header.\n\nProceeding will overwrite it. Continue?',
+          )
+        )
+          return;
+      }
       const projectDir = await root.getDirectoryHandle(project.selectedName);
       await runExtractMock({
         spreadsheetId: projectMeta.spreadsheetId,
