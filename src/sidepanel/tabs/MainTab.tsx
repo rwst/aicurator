@@ -1,6 +1,7 @@
 import { Match, Show, Switch, For, createSignal } from 'solid-js';
 import {
   PROVIDERS,
+  apiKeyKeyFor,
   saveStatus,
   setSetting,
   settings,
@@ -265,15 +266,17 @@ export default function MainTab() {
           </div>
 
           <div class="row">
-            <label for="s-key">API Key</label>
+            <label for="s-key">{settings.provider} API Key</label>
             <input
               id="s-key"
               class="field mono"
               type="password"
-              value={settings.apiKey}
-              onInput={(e) => setSetting('apiKey', e.currentTarget.value)}
+              value={settings[apiKeyKeyFor(settings.provider)]}
+              onInput={(e) =>
+                setSetting(apiKeyKeyFor(settings.provider), e.currentTarget.value)
+              }
             />
-            <span class="help">Stored locally; not synced</span>
+            <span class="help">Stored locally; not synced. Each provider keeps its own key.</span>
           </div>
 
           <div class="row">

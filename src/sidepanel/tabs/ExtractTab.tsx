@@ -4,6 +4,7 @@ import { extractLog } from '../services/log';
 import {
   addExtractPdfs,
   clearExtractPdfs,
+  currentApiKey,
   extractPdfHandles,
   project,
   projectList,
@@ -37,7 +38,7 @@ export default function ExtractTab() {
       return { kind: 'lock', text: 'enter pathway name' };
     if (extractPdfHandles().length === 0)
       return { kind: 'lock', text: 'add at least one PDF' };
-    if (settings.apiKey.length === 0 || settings.modelName.length === 0)
+    if (currentApiKey().length === 0 || settings.modelName.length === 0)
       return { kind: 'lock', text: 'configure provider in Settings' };
     return null;
   });
@@ -47,7 +48,7 @@ export default function ExtractTab() {
     project.pathwayName.trim().length > 0 &&
     extractPdfHandles().length >= 1 &&
     project.running === 'none' &&
-    settings.apiKey.length > 0 &&
+    currentApiKey().length > 0 &&
     settings.modelName.length > 0;
 
   const onAddPdf = async () => {
@@ -114,7 +115,7 @@ export default function ExtractTab() {
     try {
       provider = makeProvider({
         provider: settings.provider,
-        apiKey: settings.apiKey,
+        apiKey: currentApiKey(),
         modelName: settings.modelName,
       });
     } catch (err) {

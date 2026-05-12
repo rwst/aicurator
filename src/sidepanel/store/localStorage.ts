@@ -13,4 +13,8 @@ export const localStorage = {
     if (Object.keys(items).length === 0) return;
     await chrome.storage.local.set(items);
   },
+  async remove(keys: readonly string[]): Promise<void> {
+    if (keys.length === 0) return;
+    await chrome.storage.local.remove(keys as unknown as string[]);
+  },
 };

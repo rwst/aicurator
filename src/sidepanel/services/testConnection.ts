@@ -1,5 +1,5 @@
 import { makeProvider } from '../llm/provider';
-import { settings } from '../store';
+import { currentApiKey, settings } from '../store';
 
 export interface TestResult {
   ok: boolean;
@@ -13,8 +13,9 @@ const TIMEOUT_MS = 30_000;
 // + network reachability. Used by the "Test connection" button in
 // Settings — never used by the real Extract / Summate pipelines.
 export async function testConnection(): Promise<TestResult> {
-  if (!settings.apiKey) {
-    return { ok: false, message: 'API key is not set' };
+  const apiKey = currentApiKey();
+  if (!apiKey) {
+    return { ok: false, message: `${settings.provider} API key is not set` };
   }
   if (!settings.modelName) {
     return { ok: false, message: 'Model name is not set' };
@@ -26,7 +27,7 @@ export async function testConnection(): Promise<TestResult> {
   try {
     const provider = makeProvider({
       provider: settings.provider,
-      apiKey: settings.apiKey,
+      apiKey,
       modelName: settings.modelName,
     });
     const result = await provider.generateText(

@@ -24,24 +24,64 @@ export const PROVIDERS: readonly Provider[] = [
   'Google',
 ] as const;
 
+// Each provider needs its own API key — a single shared field would silently
+// send the wrong credential after a provider switch. Keys are stored in
+// chrome.storage.local; the active one is selected by `currentApiKey()`.
+export type ApiKeyKey =
+  | 'apiKeyAnthropic'
+  | 'apiKeyOpenAI'
+  | 'apiKeyOpenRouter'
+  | 'apiKeyGoogle';
+
+const API_KEY_BY_PROVIDER: Record<Provider, ApiKeyKey> = {
+  Anthropic: 'apiKeyAnthropic',
+  OpenAI: 'apiKeyOpenAI',
+  OpenRouter: 'apiKeyOpenRouter',
+  Google: 'apiKeyGoogle',
+};
+
+export function apiKeyKeyFor(provider: Provider): ApiKeyKey {
+  return API_KEY_BY_PROVIDER[provider];
+}
+
 export interface Settings {
   provider: Provider;
   modelName: string;
-  apiKey: string;
+  apiKeyAnthropic: string;
+  apiKeyOpenAI: string;
+  apiKeyOpenRouter: string;
+  apiKeyGoogle: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   provider: 'Anthropic',
   modelName: '',
-  apiKey: '',
+  apiKeyAnthropic: '',
+  apiKeyOpenAI: '',
+  apiKeyOpenRouter: '',
+  apiKeyGoogle: '',
 };
 
-const SETTINGS_KEYS = ['provider', 'modelName', 'apiKey'] as const;
+const SETTINGS_KEYS = [
+  'provider',
+  'modelName',
+  'apiKeyAnthropic',
+  'apiKeyOpenAI',
+  'apiKeyOpenRouter',
+  'apiKeyGoogle',
+] as const;
 type SettingsKey = (typeof SETTINGS_KEYS)[number];
 
 // Whitelist of keys that live in chrome.storage.local instead of sync.
-// API key is the only secret we hold; everything else syncs.
-const LOCAL_ONLY_KEYS: ReadonlySet<string> = new Set(['apiKey']);
+// API keys are the only secrets we hold; everything else syncs.
+const LOCAL_ONLY_KEYS: ReadonlySet<string> = new Set<string>([
+  'apiKeyAnthropic',
+  'apiKeyOpenAI',
+  'apiKeyOpenRouter',
+  'apiKeyGoogle',
+]);
+
+const LEGACY_API_KEY = 'apiKey';
 
 function backendFor(key: string): 'local' | 'sync' {
   return LOCAL_ONLY_KEYS.has(key) ? 'local' : 'sync';
@@ -126,11 +166,11 @@ function isProvider(v: unknown): v is Provider {
 }
 
 function applyExternalSetting(key: SettingsKey, value: unknown): void {
-  if (key === 'provider' && isProvider(value)) setSettings('provider', value);
-  else if (key === 'modelName' && typeof value === 'string')
-    setSettings('modelName', value);
-  else if (key === 'apiKey' && typeof value === 'string')
-    setSettings('apiKey', value);
+  if (key === 'provider') {
+    if (isProvider(value)) setSettings('provider', value);
+  } else if (typeof value === 'string') {
+    setSettings(key, value);
+  }
 }
 
 export async function hydrateSettings(): Promise<void> {
@@ -138,6 +178,31 @@ export async function hydrateSettings(): Promise<void> {
   for (const key of SETTINGS_KEYS) {
     if (key in stored) applyExternalSetting(key, stored[key]);
   }
+  await migrateLegacyApiKey();
+}
+
+// One-shot migration: pre-v2608 stored a single `apiKey` shared across all
+// providers. Move it into the slot for whichever provider is currently
+// selected (only if that slot is empty), then drop the legacy key so the
+// migration is a no-op on subsequent loads.
+async function migrateLegacyApiKey(): Promise<void> {
+  const legacy = (await localStorage.get([LEGACY_API_KEY]))[LEGACY_API_KEY];
+  if (typeof legacy !== 'string' || legacy.length === 0) {
+    await localStorage.remove([LEGACY_API_KEY]);
+    return;
+  }
+  const slot = apiKeyKeyFor(settings.provider);
+  if (settings[slot].length === 0) {
+    setSettings(slot, legacy);
+    await splitSet({ [slot]: legacy });
+  }
+  await localStorage.remove([LEGACY_API_KEY]);
+}
+
+/** API key for the currently-selected provider. Reactive — re-runs when the
+ *  user switches the provider dropdown or types into the key field. */
+export function currentApiKey(): string {
+  return settings[apiKeyKeyFor(settings.provider)];
 }
 
 export function subscribeToStorageChanges(): void {
