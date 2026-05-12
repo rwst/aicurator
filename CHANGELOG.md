@@ -4,6 +4,105 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2608 — 2026-05-12
+
+MainTab + ExtractTab bug fixes plus OpenRouter / Extract diagnostics:
+per-provider API keys, per-provider model names persisted alongside
+projects in `.aicurator-settings.json`, immediate Start→Cancel flip on
+Extract, JsonParseError carrying the raw response, OpenAI/OpenRouter
+response parsing that surfaces refusals / reasoning-only / 200-with-error
+bodies, and OpenRouter routing forced to schema-honouring providers.
+
+### Fixed
+
+- **Per-provider API keys.** The Settings panel held a single `apiKey`
+  shared across all four providers, so switching the provider dropdown
+  silently re-used the previous provider's key. `Settings` now carries
+  `apiKeyAnthropic` / `apiKeyOpenAI` / `apiKeyOpenRouter` / `apiKeyGoogle`
+  (all in `chrome.storage.local`); the Main-tab key field labels itself
+  with the active provider and reads/writes the matching slot, so flipping
+  the dropdown swaps in that provider's stored key. Consumers
+  (`testConnection`, `ExtractTab`, `SummateTab`) now route through a
+  reactive `currentApiKey()` helper. A one-shot migration in
+  `hydrateSettings` moves any pre-v2608 single `apiKey` value into the slot
+  for the currently-selected provider (only if that slot is empty), then
+  removes the legacy key.
+- **Per-provider model names.** Same shape as the API-key bug: a single
+  `modelName` was shared across all four providers, so flipping the
+  provider dropdown left the Anthropic model id pointed at OpenAI etc.
+  `Settings` now carries `modelNameAnthropic` / `modelNameOpenAI` /
+  `modelNameOpenRouter` / `modelNameGoogle`, the Main-tab label and field
+  follow the active provider, and consumers route through a reactive
+  `currentModelName()` helper paralleling `currentApiKey()`. The Main-tab
+  field is wired to `modelNameKeyFor(settings.provider)` so the input
+  swap is synchronous with the dropdown change.
+- **Extract Start button now flips to Cancel synchronously.** `onStart`
+  and `onMockTest` in `ExtractTab.tsx` only called `setRunning('extract')`
+  *after* the awaited `hasUnrelatedSheetData` Sheets probe, so the user got
+  no visual signal during the round-trip and a second Start click stacked
+  a duplicate `runExtract`. Both handlers now flip
+  `setRunning('extract')` and create the `AbortController` as their first
+  statement after the `canStart()` / `canMock()` guard, with the entire
+  body wrapped in one try/finally so any early-return path (no metadata,
+  dismissed confirm modal, `makeProvider` throw) reverts to
+  `running='none'`. A Cancel click during the pre-flight is honoured by
+  the existing `isAbortError` branch once execution reaches the
+  signal-aware `runExtract`.
+- **"LLM response did not contain a JSON object" is now diagnosable.**
+  Three layered changes after a curator hit this twice on OpenRouter
+  with no way to see what actually came back:
+  1. New `JsonParseError(message, raw)` (in `llm/types.ts`,
+     re-exported from `llm/provider`). `compose.ts:generateJson` wraps
+     both `extractJsonObject` and post-parse `validate` in a try/catch
+     that re-throws as `JsonParseError` carrying the raw provider
+     response text. `extractJsonObject` now distinguishes empty
+     response (`"LLM response was empty"`) from missing-brace
+     (`"… first 500 chars: …"`).
+  2. `runners/extract.ts` catches `JsonParseError` around the
+     `provider.generateJson` call and dumps `err.raw` to
+     `<project>/extract-response.txt` plus a "raw LLM response dumped
+     to …" warn line — previously the dump only ran on the success
+     path, so on failure the curator had nothing to inspect.
+  3. `OpenAIFormat.parse` (used by both OpenAI and OpenRouter) now
+     surfaces upstream failures instead of silently returning empty
+     text: throws on a top-level `error.message` (the 200-with-error
+     body OpenRouter returns when the upstream rejected after routing
+     accepted), surfaces `message.refusal` and `message.reasoning`
+     when `content` is empty/null, and reports a non-`stop`
+     `finish_reason` (e.g. `length`, `content_filter`) by name. So
+     instead of "no JSON object" the curator sees
+     "OpenRouter: model refused to answer: …" or
+     "OpenRouter: response was empty (finish_reason: length)".
+
+### Changed
+
+- **Provider + per-provider model names now persist in the aicurator
+  folder, not `chrome.storage.sync`.** `.aicurator-settings.json` at the
+  root of the granted aicurator directory holds
+  `{ version, provider, modelNames: { Anthropic, OpenAI, OpenRouter,
+  Google } }`; `setSetting` for any of these keys debounces a single
+  file write, and a `createEffect(rootHandle)` hydrates the in-memory
+  store on every transition into the `granted` state. API keys stay in
+  `chrome.storage.local` — they are local secrets, not workflow state
+  that should travel with the projects folder. A one-shot migration on
+  first grant pulls any pre-v2608 `provider` / `modelName` out of
+  `chrome.storage.sync` into the file and then removes the legacy
+  sync-storage keys, so the move is invisible to returning users.
+  `subscribeToStorageChanges` no longer touches provider/modelName, and
+  the `Provider` / `PROVIDERS` enum moved into `store/providers.ts` so
+  the file-IO service can import them without cycling through the
+  reactive store.
+- **OpenRouter requests now carry `provider: { require_parameters: true }`.**
+  Wrapped `OpenRouterFormat` in `llm/openrouter.ts` so OpenRouter only
+  routes to upstream providers that honour every parameter we send —
+  most importantly `response_format: { type: 'json_schema', strict: true }`
+  for Extract. Without this, OpenRouter could silently fall back to a
+  provider that drops `response_format`, in which case Extract's
+  schema becomes a non-binding suggestion and the response comes back
+  as prose. Trade-off: a model that doesn't support structured
+  outputs will now fail with an OpenRouter routing error rather than
+  returning a free-form completion that fails downstream.
+
 ## v2607 — 2026-05-11
 
 Windows fix for the projects-directory grant flow: the bootstrap
