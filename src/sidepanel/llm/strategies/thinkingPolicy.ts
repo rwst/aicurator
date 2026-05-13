@@ -5,9 +5,14 @@
 
 export interface ThinkingDecision {
   kind: 'anthropic' | 'gemini' | 'openai-effort' | 'openrouter-effort';
-  /** Anthropic-style budget tokens. Set when kind is 'anthropic' or 'gemini'. */
+  /** Anthropic wire shape: legacy `thinking.type=enabled` + `budget_tokens`,
+   *  or the newer `thinking.type=adaptive` + top-level `output_config.effort`
+   *  required by opus-4-7+. Only meaningful when kind is 'anthropic'. */
+  style?: 'budget' | 'adaptive';
+  /** Anthropic-style budget tokens. Set when kind is 'gemini', or when kind
+   *  is 'anthropic' with style='budget'. */
   budgetTokens?: number;
-  /** OpenAI/OpenRouter-style effort. Set when kind is 'openai-effort' or 'openrouter-effort'. */
+  /** OpenAI/OpenRouter-style effort, and Anthropic adaptive-style effort. */
   effort?: 'low' | 'medium' | 'high';
   /** Anthropic auto-bumps max_tokens to fit budget + visible-response headroom. */
   minOutputTokens?: number;
@@ -22,14 +27,28 @@ export interface ThinkingPolicy {
 // ── Anthropic ────────────────────────────────────────────
 // Models that accept the `thinking` parameter. Older models reject it.
 const ANTHROPIC_THINKING_MODELS = /^claude-(opus-4|sonnet-4|haiku-4|3-7-sonnet)/i;
+// Opus 4-7 (and future 4-N, N≥7) reject the legacy `thinking.type=enabled` +
+// `budget_tokens` shape and require `thinking.type=adaptive` plus a top-level
+// `output_config.effort`. Other 4.x models (sonnet-4-6, haiku-4-5, opus-4-5)
+// still take the legacy shape.
+const ANTHROPIC_ADAPTIVE_MODELS = /^claude-opus-4-([7-9]|[1-9][0-9])/i;
 const ANTHROPIC_BUDGET = 24000;
 const ANTHROPIC_MIN_OUTPUT = 32000;
 
 export const AnthropicThinking: ThinkingPolicy = {
   decide(modelName) {
     if (!ANTHROPIC_THINKING_MODELS.test(modelName)) return null;
+    if (ANTHROPIC_ADAPTIVE_MODELS.test(modelName)) {
+      return {
+        kind: 'anthropic',
+        style: 'adaptive',
+        effort: 'high',
+        minOutputTokens: ANTHROPIC_MIN_OUTPUT,
+      };
+    }
     return {
       kind: 'anthropic',
+      style: 'budget',
       budgetTokens: ANTHROPIC_BUDGET,
       minOutputTokens: ANTHROPIC_MIN_OUTPUT,
     };

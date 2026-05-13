@@ -200,6 +200,27 @@ describe('Composition wire bodies', () => {
     body = JSON.parse(d.transport.controls.sent()[0].body);
     expect(body.max_tokens).toBeGreaterThanOrEqual(32000);
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 24000 });
+
+    // Anthropic adaptive-thinking models (opus-4-7+) → thinking.type=adaptive
+    // with a top-level output_config.effort. Legacy budget_tokens is rejected
+    // server-side for these models.
+    const e = makePorts();
+    const anth_adaptive = makeAnthropicProvider('K', 'claude-opus-4-7', {
+      transport: e.transport.port,
+      base64: e.base64,
+    });
+    e.transport.controls.enqueue({
+      status: 200,
+      body: anthropicResponse('ok'),
+    });
+    await anth_adaptive.generateText(
+      { systemPrompt: 's', userText: 'u', maxOutputTokens: 16000 },
+      new AbortController().signal,
+    );
+    body = JSON.parse(e.transport.controls.sent()[0].body);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(32000);
+    expect(body.thinking).toEqual({ type: 'adaptive' });
+    expect(body.output_config).toEqual({ effort: 'high' });
   });
 
   it('15. Construction-time warnings populate after a lossy schema is seen', async () => {

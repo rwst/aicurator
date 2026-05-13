@@ -75,7 +75,17 @@ describe('ThinkingPolicy', () => {
   it('5. AnthropicThinking on claude-opus-4-5 → anthropic, budget 24000, min-output 32000', () => {
     expect(AnthropicThinking.decide('claude-opus-4-5')).toEqual({
       kind: 'anthropic',
+      style: 'budget',
       budgetTokens: 24000,
+      minOutputTokens: 32000,
+    });
+  });
+
+  it('5b. AnthropicThinking on claude-opus-4-7 → adaptive style + effort high', () => {
+    expect(AnthropicThinking.decide('claude-opus-4-7')).toEqual({
+      kind: 'anthropic',
+      style: 'adaptive',
+      effort: 'high',
       minOutputTokens: 32000,
     });
   });

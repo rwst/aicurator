@@ -89,7 +89,12 @@ export const AnthropicFormat: MessageFormat = {
       messages: [{ role: 'user', content }],
     };
     if (t && t.kind === 'anthropic') {
-      body.thinking = { type: 'enabled', budget_tokens: t.budgetTokens };
+      if (t.style === 'adaptive') {
+        body.thinking = { type: 'adaptive' };
+        body.output_config = { effort: t.effort };
+      } else {
+        body.thinking = { type: 'enabled', budget_tokens: t.budgetTokens };
+      }
     }
 
     return {
