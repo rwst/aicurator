@@ -4,6 +4,66 @@ Internal version scheme: `vYYXX` where `YY` = year mod 100 and `XX` is a
 sequential two-digit counter within that year. The browser-facing
 `manifest_version` follows semver-style `<YY>.<XX>.<patch>`.
 
+## v2609 — 2026-05-13
+
+Anthropic API compatibility fix for the opus-4-7+ thinking shape, plus
+Canonize alt-protein-name SPARQL fallback.
+
+### Fixed
+
+- **Anthropic `thinking` payload for claude-opus-4-7+.** Requests to
+  `claude-opus-4-7` were rejected with
+  `"thinking.type.enabled" is not supported for this model. Use
+  "thinking.type.adaptive" and "output_config.effort" to control thi…`.
+  The Anthropic wire format always emitted the legacy
+  `thinking: { type: 'enabled', budget_tokens }` shape, which the
+  newest Opus family no longer accepts. `ThinkingDecision` now carries
+  a `style: 'budget' | 'adaptive'` discriminator; `AnthropicThinking`
+  matches `^claude-opus-4-([7-9]|[1-9][0-9])` and returns the adaptive
+  decision, and `AnthropicFormat` branches on `style` to emit
+  `thinking: { type: 'adaptive' }` plus a top-level
+  `output_config: { effort: 'high' }` for those models while keeping
+  the legacy `enabled` + `budget_tokens` payload for opus-4-5,
+  sonnet-4-6, haiku-4-5, and 3-7-sonnet. The `minOutputTokens=32000`
+  auto-bump still applies on both paths.
+- **Canonize "no UniProt match for Ku86".** Labels that are protein
+  synonyms but not gene aliases (e.g. "Ku86" → XRCC5/P13010) used to
+  fall through every pass and end up as `noMatch`, because both SPARQL
+  paths only matched on the gene entity (`skos:prefLabel` /
+  `skos:altLabel`). Replaced the SPARQL TrEMBL pass with a
+  reviewed-only **alt-protein-name SPARQL pass** that queries
+  `up:alternativeName/up:fullName`, `up:alternativeName/up:shortName`,
+  and `up:recommendedName/up:shortName` on the protein. The
+  descriptive `recommendedName/fullName` is deliberately excluded —
+  long descriptive strings collide across genes. The new pass runs
+  only for labels the gene-name pass didn't resolve, so reviewed-gene
+  matches still take strict priority (Timeless ↔ TIPIN protection
+  preserved). `UniprotPort.searchSparqlTrembl` →
+  `UniprotPort.searchSparqlAlt`; `counts.trembl` → `counts.altName`;
+  `CanonizerEvent.pass` `'sparql-trembl'` → `'sparql-alt'`. Existing
+  curator-spelling preservation, ambiguity disambiguation, and
+  per-pass attribution are unchanged.
+- **Canonize alt-protein-name pass case-sensitivity.** First cut still
+  missed "Ku86": the canonizer uppercases every curator label before
+  query (because UniProt gene symbols are uppercase), but
+  `up:alternativeName/up:fullName` literals preserve original casing
+  ("Ku86", not "KU86") and SPARQL `VALUES` is case-sensitive — verified
+  by direct curl. The alt-name pass now sends the curator's *original*
+  spellings (one per upper-key, deduped) to UniProt, then re-keys the
+  result map by upper-case so the disambiguator can still merge
+  alt-name hits with the upper-case-keyed reviewed-gene and REST
+  result maps. Gene-name pass still uses upper-case (correct for
+  HGNC).
+- **Canonize log compression.** The old "no UniProt match for X —
+  leaving as is" / "ambiguous: X matched multiple…" lines fired once
+  per entity, drowning the log on real ranges. `CanonizerEvent`
+  `resolve-done` now also carries the curator-spelling → canonical
+  replacements map, and `mapCanonizerEventToLog` collapses the
+  per-entity stream to three single-line summaries: `replaced: A → X;
+  B → Y; …`, `no UniProt match: A, B, C`, and `ambiguous (multiple
+  reviewed-human proteins): A, B`. Each line is suppressed when its
+  list is empty.
+
 ## v2608 — 2026-05-12
 
 MainTab + ExtractTab bug fixes plus OpenRouter / Extract diagnostics:
