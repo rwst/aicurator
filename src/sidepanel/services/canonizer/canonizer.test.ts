@@ -36,7 +36,7 @@ describe('createCanonizer', () => {
   it('1. Priority — reviewed-SPARQL hit short-circuits TrEMBL and REST', async () => {
     const { port, controls } = createFakeUniprot();
     controls.queueReviewed(new Map([['TP53', [hit('TP53')]]]));
-    // queueing nothing for trembl/rest — calls would be visible but
+    // queueing nothing for alt/rest — calls would be visible but
     // also the assertion below is on the `calls` log.
     controls.setRestResolver(async () => {
       throw new Error('rest must not be called for TP53');
@@ -58,7 +58,7 @@ describe('createCanonizer', () => {
     // what proves priority.
     const calls = controls.calls();
     expect(calls.some((c) => c.method === 'searchSparqlReviewed')).toBe(true);
-    expect(calls.some((c) => c.method === 'searchSparqlTrembl')).toBe(false);
+    expect(calls.some((c) => c.method === 'searchSparqlAlt')).toBe(false);
     expect(calls.some((c) => c.method === 'searchRest')).toBe(false);
     expect(r.report.replacements.size).toBe(0);
   });
@@ -80,9 +80,36 @@ describe('createCanonizer', () => {
     expect(r.report.replacements.get('Tipin')).toBe('TIPIN');
     expect(r.report.counts).toEqual({
       reviewedSparql: 1,
-      trembl: 0,
+      altName: 0,
       rest: 0,
     });
+  });
+
+  it('1c. Alt-protein-name fallback — "Ku86" resolves to XRCC5 via the alt-name pass when the gene-name pass misses', async () => {
+    const { port, controls } = createFakeUniprot();
+    // Gene-name SPARQL returns nothing for KU86 — Ku86 is not a gene
+    // alias, only a protein synonym (UniProt up:alternativeName/fullName
+    // on P13010). Alt-name SPARQL is what catches it.
+    controls.queueReviewed(new Map());
+    controls.queueAlt(new Map([['KU86', [hit('XRCC5')]]]));
+    // REST must not run — the alt-name pass already resolved it.
+    controls.setRestResolver(async () => {
+      throw new Error('rest must not be called for Ku86');
+    });
+
+    const canonizer = createCanonizer({
+      uniprot: port,
+      layout: REACTION_LAYOUT,
+    });
+    const rows = [row('Title', '', 'Ku86 [nucleoplasm]', '', '', '')];
+    const r = await canonizer.canonize({
+      rows,
+      range: rangeOf(rows),
+      signal: new AbortController().signal,
+    });
+    expect(r.report.replacements.get('Ku86')).toBe('XRCC5');
+    expect(r.report.counts.altName).toBe(1);
+    expect(r.rewritten[0].after[2]).toBe('XRCC5 [nucleoplasm]');
   });
 
   it('2. Ambiguity — two distinct reviewed gene hits leave the label unchanged', async () => {
@@ -209,28 +236,18 @@ describe('createCanonizer', () => {
         v as ReadonlyArray<GeneHit>,
       ])),
     );
-    // 3 TrEMBL hits.
-    controls.queueTrembl(
+    // 3 alt-protein-name hits — mapped via up:alternativeName.
+    controls.queueAlt(
       new Map([
-        ['Trembl1', [hit('TR1', false)]],
-        ['Trembl2', [hit('TR2', false)]],
-        ['AmbigT', [hit('A', false), hit('B', false)]], // ambiguous via TrEMBL
+        ['AltName1', [hit('AN1')]],
+        ['AltName2', [hit('AN2')]],
+        ['AmbigA', [hit('A'), hit('B')]], // ambiguous via alt-name pass
       ].map(([k, v]) => [
         (k as string).toUpperCase(),
         v as ReadonlyArray<GeneHit>,
       ])),
     );
     // 2 REST hits + 1 noMatch (REST returns []).
-    const restMap: Record<string, GeneHit[]> = {
-      'Rest1Lower': [hit('REST1A')],
-      'Rest2Lower': [hit('REST2A')],
-      'NoMatch1Lower': [],
-    };
-    controls.setRestResolver(async (label) => {
-      return restMap[label.toLowerCase().replace('lower', 'lower')] ?? [];
-    });
-    // The REST resolver is keyed on the labels we send — uppercase.
-    // Re-key:
     const restByUpper: Record<string, GeneHit[]> = {
       REST1LOWER: [hit('REST1A')],
       REST2LOWER: [hit('REST2A')],
@@ -248,9 +265,9 @@ describe('createCanonizer', () => {
       'Cdk4Lower',
       'Cdk6Lower',
       'Cdk7Lower',
-      'Trembl1',
-      'Trembl2',
-      'AmbigT',
+      'AltName1',
+      'AltName2',
+      'AmbigA',
       'Rest1Lower',
       'Rest2Lower',
       'NoMatch1Lower',
@@ -263,9 +280,9 @@ describe('createCanonizer', () => {
       signal: new AbortController().signal,
     });
     expect(r.report.counts.reviewedSparql).toBe(5);
-    expect(r.report.counts.trembl).toBe(2);
+    expect(r.report.counts.altName).toBe(2);
     expect(r.report.counts.rest).toBe(2);
-    expect([...r.report.ambiguous]).toContain('AmbigT');
+    expect([...r.report.ambiguous]).toContain('AmbigA');
     expect([...r.report.noMatch]).toContain('NoMatch1Lower');
     expect(r.report.replacements.size).toBe(9);
   });
@@ -274,9 +291,9 @@ describe('createCanonizer', () => {
     const { port, controls } = createFakeUniprot();
     const ctrl = new AbortController();
     controls.queueReviewed(new Map());
-    // After reviewed returns empty, trembl is the next call; it should
-    // never run because we abort first.
-    controls.rejectTremblWith(new Error('trembl must not run'));
+    // After reviewed returns empty, the alt-name pass is next; it
+    // should never run because we abort first.
+    controls.rejectAltWith(new Error('alt must not run'));
     // Abort right after reviewed resolves: schedule via Promise.resolve.
     Promise.resolve().then(() => ctrl.abort());
 
@@ -292,7 +309,7 @@ describe('createCanonizer', () => {
         signal: ctrl.signal,
       }),
     ).rejects.toBeInstanceOf(CanonizerAbortedError);
-    expect(controls.calls().some((c) => c.method === 'searchSparqlTrembl')).toBe(false);
+    expect(controls.calls().some((c) => c.method === 'searchSparqlAlt')).toBe(false);
   });
 
   it('11. 60s SPARQL timeout under virtual time — searchSparqlReviewed hangs forever; canonize rejects after 60_000 virtual ms', async () => {

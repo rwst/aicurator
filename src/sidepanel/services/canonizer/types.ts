@@ -52,7 +52,7 @@ export interface CanonizeReport {
   /** Per-pass attribution for the audit trail. */
   readonly counts: {
     readonly reviewedSparql: number;
-    readonly trembl: number;
+    readonly altName: number;
     readonly rest: number;
   };
   /** curator-spelling → canonical-uppercase, for diff display. */
@@ -76,7 +76,7 @@ export type CanonizerEvent =
   | { kind: 'resolve-start'; queryable: number }
   | {
       kind: 'resolve-pass-end';
-      pass: 'sparql-reviewed' | 'sparql-trembl' | 'rest';
+      pass: 'sparql-reviewed' | 'sparql-alt' | 'rest';
       resolved: number;
       remaining: number;
       ms: number;

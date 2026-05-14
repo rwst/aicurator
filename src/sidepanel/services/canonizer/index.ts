@@ -191,7 +191,7 @@ interface ResolveOutput {
   replacements: Map<string, string>;
   noMatch: string[];
   ambiguous: string[];
-  counts: { reviewedSparql: number; trembl: number; rest: number };
+  counts: { reviewedSparql: number; altName: number; rest: number };
 }
 
 async function runResolve(
@@ -204,7 +204,7 @@ async function runResolve(
   const replacements = new Map<string, string>();
   const noMatch: string[] = [];
   const ambiguous: string[] = [];
-  const counts = { reviewedSparql: 0, trembl: 0, rest: 0 };
+  const counts = { reviewedSparql: 0, altName: 0, rest: 0 };
   if (labels.length === 0) return { replacements, noMatch, ambiguous, counts };
 
   // Curator-spelling is preserved as the replacement key. We send
@@ -243,16 +243,21 @@ async function runResolve(
     ms: now() - t0,
   });
 
-  // ── Pass 2: SPARQL TrEMBL fallback ───────────────────────
+  // ── Pass 2: SPARQL alt-protein-name fallback ─────────────
+  // Catches synonyms like "Ku86" → XRCC5 that aren't in skos gene
+  // labels but live under up:alternativeName / up:recommendedName on
+  // the protein. Only labels not resolved by the gene-name pass are
+  // sent — gene-name matches always win first, preserving the
+  // Timeless ↔ TIPIN cross-gene-collision protection.
   const remainingAfterReviewed = upperLabels.filter(
     (l) => !reviewedHits.has(l),
   );
-  let tremblHits: ReadonlyMap<string, ReadonlyArray<GeneHit>> = new Map();
+  let altHits: ReadonlyMap<string, ReadonlyArray<GeneHit>> = new Map();
   if (remainingAfterReviewed.length > 0) {
     if (signal.aborted) throw new CanonizerAbortedError();
     const t1 = now();
     try {
-      tremblHits = await uniprot.searchSparqlTrembl(
+      altHits = await uniprot.searchSparqlAlt(
         remainingAfterReviewed,
         signal,
       );
@@ -262,23 +267,23 @@ async function runResolve(
     }
     emit({
       kind: 'resolve-pass-end',
-      pass: 'sparql-trembl',
-      resolved: tremblHits.size,
-      remaining: remainingAfterReviewed.length - tremblHits.size,
+      pass: 'sparql-alt',
+      resolved: altHits.size,
+      remaining: remainingAfterReviewed.length - altHits.size,
       ms: now() - t1,
     });
   }
 
   // ── Pass 3: REST per-label fan-out, reviewed-first then full ─
-  const remainingAfterTrembl = remainingAfterReviewed.filter(
-    (l) => !tremblHits.has(l),
+  const remainingAfterAlt = remainingAfterReviewed.filter(
+    (l) => !altHits.has(l),
   );
   const restHits = new Map<string, ReadonlyArray<GeneHit>>();
-  if (remainingAfterTrembl.length > 0) {
+  if (remainingAfterAlt.length > 0) {
     if (signal.aborted) throw new CanonizerAbortedError();
     const t2 = now();
     const reviewedFirst = await mapWithLimit(
-      remainingAfterTrembl,
+      remainingAfterAlt,
       REST_CONCURRENCY,
       async (label) => {
         if (signal.aborted) return [] as ReadonlyArray<GeneHit>;
@@ -291,11 +296,11 @@ async function runResolve(
       },
     );
     if (signal.aborted) throw new CanonizerAbortedError();
-    for (let i = 0; i < remainingAfterTrembl.length; i += 1) {
+    for (let i = 0; i < remainingAfterAlt.length; i += 1) {
       if (reviewedFirst[i].length > 0)
-        restHits.set(remainingAfterTrembl[i], reviewedFirst[i]);
+        restHits.set(remainingAfterAlt[i], reviewedFirst[i]);
     }
-    const stillEmpty = remainingAfterTrembl.filter((l) => !restHits.has(l));
+    const stillEmpty = remainingAfterAlt.filter((l) => !restHits.has(l));
     if (stillEmpty.length > 0) {
       const restAll = await mapWithLimit(
         stillEmpty,
@@ -319,7 +324,7 @@ async function runResolve(
       kind: 'resolve-pass-end',
       pass: 'rest',
       resolved: restHits.size,
-      remaining: remainingAfterTrembl.length - restHits.size,
+      remaining: remainingAfterAlt.length - restHits.size,
       ms: now() - t2,
     });
   }
@@ -327,16 +332,16 @@ async function runResolve(
   // ── Disambiguate per upper-cased label ───────────────────
   for (const u of upperLabels) {
     const fromReviewed = reviewedHits.get(u);
-    const fromTrembl = tremblHits.get(u);
+    const fromAlt = altHits.get(u);
     const fromRest = restHits.get(u);
     let pool: ReadonlyArray<GeneHit> | undefined;
-    let pass: 'reviewedSparql' | 'trembl' | 'rest' | null = null;
+    let pass: 'reviewedSparql' | 'altName' | 'rest' | null = null;
     if (fromReviewed && fromReviewed.length > 0) {
       pool = fromReviewed;
       pass = 'reviewedSparql';
-    } else if (fromTrembl && fromTrembl.length > 0) {
-      pool = fromTrembl;
-      pass = 'trembl';
+    } else if (fromAlt && fromAlt.length > 0) {
+      pool = fromAlt;
+      pass = 'altName';
     } else if (fromRest && fromRest.length > 0) {
       pool = fromRest;
       pass = 'rest';

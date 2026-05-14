@@ -4,7 +4,7 @@
 import type { GeneHit, UniprotPort } from '../ports';
 
 export interface UniprotCall {
-  method: 'searchSparqlReviewed' | 'searchSparqlTrembl' | 'searchRest';
+  method: 'searchSparqlReviewed' | 'searchSparqlAlt' | 'searchRest';
   labels: ReadonlyArray<string>;
   /** REST only. */
   reviewedOnly?: boolean;
@@ -12,10 +12,12 @@ export interface UniprotCall {
 }
 
 export interface FakeUniprotControls {
-  /** Queue a canned reviewed-SPARQL response. The next call to
+  /** Queue a canned reviewed-gene-SPARQL response. The next call to
    *  searchSparqlReviewed pops it. */
   queueReviewed(hits: ReadonlyMap<string, ReadonlyArray<GeneHit>>): void;
-  queueTrembl(hits: ReadonlyMap<string, ReadonlyArray<GeneHit>>): void;
+  /** Queue a canned alt-protein-name SPARQL response. The next call to
+   *  searchSparqlAlt pops it. */
+  queueAlt(hits: ReadonlyMap<string, ReadonlyArray<GeneHit>>): void;
   /** Programmer-supplied resolver for REST — given (label, reviewedOnly)
    *  return the canned hits. */
   setRestResolver(
@@ -27,7 +29,7 @@ export interface FakeUniprotControls {
   /** Make the next searchSparqlReviewed never resolve (for timeout tests). */
   hangNextReviewed(): void;
   rejectReviewedWith(err: Error): void;
-  rejectTremblWith(err: Error): void;
+  rejectAltWith(err: Error): void;
 
   calls(): ReadonlyArray<UniprotCall>;
 }
@@ -45,7 +47,7 @@ export function createFakeUniprot(
     | Error
     | 'hang'
   )[] = [];
-  const tremblQueue: (
+  const altQueue: (
     | ReadonlyMap<string, ReadonlyArray<GeneHit>>
     | Error
   )[] = [];
@@ -83,16 +85,16 @@ export function createFakeUniprot(
       if (next instanceof Error) throw next;
       return next ?? new Map();
     },
-    async searchSparqlTrembl(labels, signal) {
+    async searchSparqlAlt(labels, signal) {
       callLog.push({
-        method: 'searchSparqlTrembl',
+        method: 'searchSparqlAlt',
         labels: [...labels],
         at: now(),
       });
       if (signal.aborted) {
         throw signal.reason ?? new DOMException('aborted', 'AbortError');
       }
-      const next = tremblQueue.shift();
+      const next = altQueue.shift();
       if (next instanceof Error) throw next;
       return next ?? new Map();
     },
@@ -115,8 +117,8 @@ export function createFakeUniprot(
     queueReviewed(hits) {
       reviewedQueue.push(hits);
     },
-    queueTrembl(hits) {
-      tremblQueue.push(hits);
+    queueAlt(hits) {
+      altQueue.push(hits);
     },
     setRestResolver(fn) {
       restResolver = fn;
@@ -127,8 +129,8 @@ export function createFakeUniprot(
     rejectReviewedWith(err) {
       reviewedQueue.push(err);
     },
-    rejectTremblWith(err) {
-      tremblQueue.push(err);
+    rejectAltWith(err) {
+      altQueue.push(err);
     },
     calls: () => callLog.map((c) => ({ ...c, labels: [...c.labels] })),
   };

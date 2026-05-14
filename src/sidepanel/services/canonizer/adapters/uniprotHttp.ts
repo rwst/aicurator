@@ -1,10 +1,21 @@
 // Production UniprotPort adapter — drives UniProt SPARQL + REST over
 // HTTP. Owns:
-//   - SPARQL query construction (the genePrefLabel + geneAltLabel union
-//     with the deliberate exclusion of protein-name paths to avoid
-//     cross-gene collisions like Timeless ↔ TIPIN),
+//   - SPARQL query construction for two distinct path-sets:
+//       GENE_MATCH_PATHS  (skos:prefLabel + skos:altLabel on the
+//                          encoded gene entity) — the strict match,
+//       ALT_MATCH_PATHS   (up:alternativeName/{fullName,shortName} +
+//                          up:recommendedName/shortName on the protein)
+//                         — the fallback for protein-name-only synonyms
+//                          like "Ku86" that resolve to XRCC5/P13010 but
+//                          aren't gene aliases. The descriptive
+//                          recommendedName/fullName is deliberately
+//                          excluded — it produces long noisy strings
+//                          ("X-ray repair cross-complementing protein
+//                          5") that would collide across genes.
 //   - the human-only filter (taxon:9606),
-//   - the reviewed=true SPARQL filter,
+//   - the reviewed=true SPARQL filter (both passes are reviewed-only;
+//     TrEMBL fallback was removed once the alt-name pass made the
+//     unreviewed fallback redundantly noisy),
 //   - URL encoding for REST `gene:` queries (the previous string-concat
 //     was fragile around `+` and `:`),
 //   - 60s SPARQL / 15s REST timeouts via `clock.withTimeout` so they
@@ -27,9 +38,29 @@ interface SparqlResponse {
   results?: { bindings: SparqlBinding[] };
 }
 
-const MATCH_PATHS: readonly { name: string; triple: string }[] = [
+interface MatchPath {
+  readonly name: string;
+  readonly triple: string;
+}
+
+const GENE_MATCH_PATHS: readonly MatchPath[] = [
   { name: 'genePrefLabel', triple: '?geneEntity skos:prefLabel ?label .' },
   { name: 'geneAltLabel', triple: '?geneEntity skos:altLabel ?label .' },
+] as const;
+
+const ALT_MATCH_PATHS: readonly MatchPath[] = [
+  {
+    name: 'altNameFull',
+    triple: '?protein up:alternativeName/up:fullName ?label .',
+  },
+  {
+    name: 'altNameShort',
+    triple: '?protein up:alternativeName/up:shortName ?label .',
+  },
+  {
+    name: 'recNameShort',
+    triple: '?protein up:recommendedName/up:shortName ?label .',
+  },
 ] as const;
 
 function escapeSparqlLiteral(s: string): string {
@@ -39,12 +70,10 @@ function escapeSparqlLiteral(s: string): string {
 function buildSparqlQuery(
   labels: readonly string[],
   matchTriple: string,
-  reviewedOnly: boolean,
 ): string {
   const valuesBlock = labels
     .map((l) => `"${escapeSparqlLiteral(l)}"`)
     .join(' ');
-  const reviewedFilter = reviewedOnly ? 'FILTER(?reviewed = true)' : '';
   return `PREFIX up: <http://purl.uniprot.org/core/>
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX taxon: <http://purl.uniprot.org/taxonomy/>
@@ -57,7 +86,7 @@ SELECT DISTINCT ?label ?gene ?reviewed WHERE {
            up:encodedBy ?geneEntity .
   ?geneEntity skos:prefLabel ?gene .
   ${matchTriple}
-  ${reviewedFilter}
+  FILTER(?reviewed = true)
 }`;
 }
 
@@ -82,10 +111,9 @@ export function createHttpUniprotAdapter(
   async function runSparqlPath(
     labels: readonly string[],
     matchTriple: string,
-    reviewedOnly: boolean,
     parentSignal: AbortSignal,
   ): Promise<SparqlResponse | null> {
-    const query = buildSparqlQuery(labels, matchTriple, reviewedOnly);
+    const query = buildSparqlQuery(labels, matchTriple);
     return opts.clock.withTimeout(
       SPARQL_TIMEOUT_MS,
       parentSignal,
@@ -110,31 +138,29 @@ export function createHttpUniprotAdapter(
   }
 
   async function searchSparql(
+    paths: readonly MatchPath[],
     labels: readonly string[],
-    reviewedOnly: boolean,
     signal: AbortSignal,
   ): Promise<ReadonlyMap<string, ReadonlyArray<GeneHit>>> {
     if (labels.length === 0) return new Map();
     const errors: Error[] = [];
     const results = await Promise.all(
-      MATCH_PATHS.map((p) =>
-        runSparqlPath(labels, p.triple, reviewedOnly, signal).catch(
-          (err) => {
-            // Per-path failures are tolerated when at least one path
-            // succeeds — log via console; the orchestrator just sees a
-            // smaller bindings list. If ALL paths fail, we surface
-            // the failure (test 11: 60s timeout on every path).
-            console.warn(
-              `[uniprot] ${p.name} path failed:`,
-              (err as Error).message,
-            );
-            errors.push(err as Error);
-            return null;
-          },
-        ),
+      paths.map((p) =>
+        runSparqlPath(labels, p.triple, signal).catch((err) => {
+          // Per-path failures are tolerated when at least one path
+          // succeeds — log via console; the orchestrator just sees a
+          // smaller bindings list. If ALL paths fail, we surface
+          // the failure (test 11: 60s timeout on every path).
+          console.warn(
+            `[uniprot] ${p.name} path failed:`,
+            (err as Error).message,
+          );
+          errors.push(err as Error);
+          return null;
+        }),
       ),
     );
-    if (errors.length === MATCH_PATHS.length) {
+    if (errors.length === paths.length) {
       throw errors[0];
     }
     const byLabel = new Map<string, GeneHit[]>();
@@ -158,11 +184,11 @@ export function createHttpUniprotAdapter(
 
   return {
     async searchSparqlReviewed(labels, signal) {
-      return searchSparql(labels, true, signal);
+      return searchSparql(GENE_MATCH_PATHS, labels, signal);
     },
 
-    async searchSparqlTrembl(labels, signal) {
-      return searchSparql(labels, false, signal);
+    async searchSparqlAlt(labels, signal) {
+      return searchSparql(ALT_MATCH_PATHS, labels, signal);
     },
 
     async searchRest(label, reviewedOnly, signal) {

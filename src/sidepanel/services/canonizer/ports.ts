@@ -7,7 +7,7 @@
 // batch}) would force every adapter to dispatch on options and would
 // let tests accidentally write `searchRest(["A","B"])` even though the
 // real REST is one-label-at-a-time. Three methods make priority tests
-// trivially expressible — `expect(port.searchSparqlTrembl).not
+// trivially expressible — `expect(port.searchSparqlAlt).not
 // .toHaveBeenCalledWith(['TP53'])` *is* the priority invariant.
 //
 // Clock owns withTimeout so the 60s SPARQL hang test passes in zero
@@ -24,16 +24,21 @@ export interface GeneHit {
 }
 
 export interface UniprotPort {
-  /** Batch SPARQL with reviewed=true filter. The map keys are the
-   *  upper-cased query labels; values are zero-or-more GeneHit per
-   *  label. */
+  /** Batch SPARQL against gene-name paths (skos:prefLabel +
+   *  skos:altLabel on the encoded gene entity), reviewed=true. The map
+   *  keys are the upper-cased query labels; values are zero-or-more
+   *  GeneHit per label. */
   searchSparqlReviewed(
     labels: ReadonlyArray<string>,
     signal: AbortSignal,
   ): Promise<ReadonlyMap<string, ReadonlyArray<GeneHit>>>;
 
-  /** Same shape as reviewed, against TrEMBL. */
-  searchSparqlTrembl(
+  /** Batch SPARQL against protein-name paths (up:alternativeName
+   *  full/short + up:recommendedName short), reviewed=true. Run as a
+   *  fallback after the gene-name pass for synonyms like "Ku86" that
+   *  are protein-name-only. The descriptive recommendedName/fullName
+   *  is deliberately excluded (long descriptive strings collide). */
+  searchSparqlAlt(
     labels: ReadonlyArray<string>,
     signal: AbortSignal,
   ): Promise<ReadonlyMap<string, ReadonlyArray<GeneHit>>>;
