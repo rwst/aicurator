@@ -86,6 +86,9 @@ export type CanonizerEvent =
       resolved: number;
       noMatch: ReadonlyArray<string>;
       ambiguous: ReadonlyArray<string>;
+      /** curator-spelling → canonical-uppercase, for the compressed
+       *  one-line "replaced: A → X; B → Y; …" log summary. */
+      replacements: ReadonlyMap<string, string>;
       ms: number;
     }
   | { kind: 'rewrite-done'; rowsChanged: number };

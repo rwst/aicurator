@@ -42,13 +42,19 @@ export function mapCanonizerEventToLog(log: Log, e: CanonizerEvent): void {
         `UniProt resolved in ${(e.ms / 1000).toFixed(1)}s · ${e.resolved} mapped · ` +
           `${e.noMatch.length} no-match · ${e.ambiguous.length} ambiguous`,
       );
-      for (const n of e.noMatch) {
-        log.append('warn', `no UniProt match for "${n}" — leaving as is`);
+      if (e.replacements.size > 0) {
+        const pairs = [...e.replacements]
+          .map(([from, to]) => `${from} → ${to}`)
+          .join('; ');
+        log.append('ok', `replaced: ${pairs}`);
       }
-      for (const a of e.ambiguous) {
+      if (e.noMatch.length > 0) {
+        log.append('warn', `no UniProt match: ${e.noMatch.join(', ')}`);
+      }
+      if (e.ambiguous.length > 0) {
         log.append(
           'warn',
-          `ambiguous: "${a}" matched multiple reviewed-human proteins — leaving as is`,
+          `ambiguous (multiple reviewed-human proteins): ${e.ambiguous.join(', ')}`,
         );
       }
       return;

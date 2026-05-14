@@ -123,6 +123,7 @@ export function createCanonizer(opts: CreateCanonizerOptions): Canonizer {
         resolved: resolveResult.replacements.size,
         noMatch: resolveResult.noMatch,
         ambiguous: resolveResult.ambiguous,
+        replacements: new Map(resolveResult.replacements),
         ms: resolveMs,
       });
 
@@ -249,21 +250,45 @@ async function runResolve(
   // the protein. Only labels not resolved by the gene-name pass are
   // sent — gene-name matches always win first, preserving the
   // Timeless ↔ TIPIN cross-gene-collision protection.
+  //
+  // Important: alt-protein-name literals in UniProt preserve original
+  // casing ("Ku86", not "KU86"), and SPARQL VALUES matches are
+  // case-sensitive. We send the curator's *original* spellings (one
+  // per upper-key, deduped) and re-key the result map by upper-case
+  // so the disambiguator below can merge alt-name hits with the
+  // upper-case-keyed reviewed and REST result maps.
   const remainingAfterReviewed = upperLabels.filter(
     (l) => !reviewedHits.has(l),
   );
-  let altHits: ReadonlyMap<string, ReadonlyArray<GeneHit>> = new Map();
-  if (remainingAfterReviewed.length > 0) {
+  const altQueryLabels: string[] = [];
+  const altQueryToUpper = new Map<string, string>();
+  for (const u of remainingAfterReviewed) {
+    for (const orig of upperToOriginal.get(u) ?? []) {
+      if (!altQueryToUpper.has(orig)) {
+        altQueryLabels.push(orig);
+        altQueryToUpper.set(orig, u);
+      }
+    }
+  }
+  const altHits = new Map<string, GeneHit[]>();
+  if (altQueryLabels.length > 0) {
     if (signal.aborted) throw new CanonizerAbortedError();
     const t1 = now();
+    let altRaw: ReadonlyMap<string, ReadonlyArray<GeneHit>>;
     try {
-      altHits = await uniprot.searchSparqlAlt(
-        remainingAfterReviewed,
-        signal,
-      );
+      altRaw = await uniprot.searchSparqlAlt(altQueryLabels, signal);
     } catch (err) {
       if (isAbort(err)) throw new CanonizerAbortedError();
       throw err;
+    }
+    for (const [literal, hits] of altRaw) {
+      const upper = altQueryToUpper.get(literal) ?? literal.toUpperCase();
+      let arr = altHits.get(upper);
+      if (!arr) {
+        arr = [];
+        altHits.set(upper, arr);
+      }
+      arr.push(...hits);
     }
     emit({
       kind: 'resolve-pass-end',

@@ -89,9 +89,12 @@ describe('createCanonizer', () => {
     const { port, controls } = createFakeUniprot();
     // Gene-name SPARQL returns nothing for KU86 — Ku86 is not a gene
     // alias, only a protein synonym (UniProt up:alternativeName/fullName
-    // on P13010). Alt-name SPARQL is what catches it.
+    // on P13010). Alt-name SPARQL is keyed by the literal that
+    // matched — UniProt stores it as "Ku86", not "KU86", and SPARQL
+    // VALUES is case-sensitive — so the canonizer must send the
+    // curator's original spelling, not the upper-cased form.
     controls.queueReviewed(new Map());
-    controls.queueAlt(new Map([['KU86', [hit('XRCC5')]]]));
+    controls.queueAlt(new Map([['Ku86', [hit('XRCC5')]]]));
     // REST must not run — the alt-name pass already resolved it.
     controls.setRestResolver(async () => {
       throw new Error('rest must not be called for Ku86');
@@ -110,6 +113,15 @@ describe('createCanonizer', () => {
     expect(r.report.replacements.get('Ku86')).toBe('XRCC5');
     expect(r.report.counts.altName).toBe(1);
     expect(r.rewritten[0].after[2]).toBe('XRCC5 [nucleoplasm]');
+    // Verify the alt-name SPARQL pass got the curator's original
+    // spelling ("Ku86"), NOT the upper-cased form ("KU86") that the
+    // gene-name pass receives.
+    const altCalls = controls
+      .calls()
+      .filter((c) => c.method === 'searchSparqlAlt');
+    expect(altCalls).toHaveLength(1);
+    expect(altCalls[0].labels).toContain('Ku86');
+    expect(altCalls[0].labels).not.toContain('KU86');
   });
 
   it('2. Ambiguity — two distinct reviewed gene hits leave the label unchanged', async () => {
@@ -236,16 +248,15 @@ describe('createCanonizer', () => {
         v as ReadonlyArray<GeneHit>,
       ])),
     );
-    // 3 alt-protein-name hits — mapped via up:alternativeName.
+    // 3 alt-protein-name hits — mapped via up:alternativeName. Alt
+    // SPARQL is queried with the curator's *original* spelling (not
+    // upper-cased) because UniProt alt-name literals preserve case.
     controls.queueAlt(
-      new Map([
+      new Map<string, ReadonlyArray<GeneHit>>([
         ['AltName1', [hit('AN1')]],
         ['AltName2', [hit('AN2')]],
         ['AmbigA', [hit('A'), hit('B')]], // ambiguous via alt-name pass
-      ].map(([k, v]) => [
-        (k as string).toUpperCase(),
-        v as ReadonlyArray<GeneHit>,
-      ])),
+      ]),
     );
     // 2 REST hits + 1 noMatch (REST returns []).
     const restByUpper: Record<string, GeneHit[]> = {
